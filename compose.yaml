@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: calcron
+      POSTGRES_PASSWORD: calcron
+      POSTGRES_DB: calcron
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U calcron"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  calcron:
+    build: .
+    environment:
+      DATABASE_URL: postgres://calcron:calcron@postgres:5432/calcron?sslmode=disable
+      CALCRON_ADMIN_TOKEN: change-me
+      CALCRON_RETRY_BASE: ${CALCRON_RETRY_BASE:-1s}
+    ports: ["8080:8080"]
+    depends_on:
+      postgres:
+        condition: service_healthy

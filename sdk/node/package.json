@@ -1,0 +1,7 @@
+{
+  "name": "@calcron/node",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --experimental-strip-types --test index.test.ts" },
+  "devDependencies": { "ws": "^8.18.0" }
+}
