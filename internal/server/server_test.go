@@ -292,6 +292,60 @@ func TestApplicationCannotAcknowledgeAnotherApplicationsDelivery(t *testing.T) {
 	}
 }
 
+func TestCalendarNextHonorsOverridesAndDST(t *testing.T) {
+	ctx, _, admin := testServer(t, 0)
+	appID, _ := newApp(t, ctx, admin, "calendar")
+	write(t, ctx, admin, map[string]any{"op": "calendar.set", "applicationId": appID, "name": "ny", "data": map[string]any{
+		"timezone": "America/New_York", "weekdays": []int{1}, "overrides": map[string]bool{"2025-01-04": true, "2025-01-06": false},
+	}})
+	if got := read(t, ctx, admin); got["ok"] != true {
+		t.Fatalf("calendar.set: %#v", got)
+	}
+	write(t, ctx, admin, map[string]any{"op": "calendar.next", "applicationId": appID, "calendar": "ny", "localTime": "09:00", "at": "2025-01-03T12:00:00Z"})
+	if got := read(t, ctx, admin); got["ok"] != true || got["data"].(map[string]any)["nextAt"] != "2025-01-04T14:00:00Z" {
+		t.Fatalf("calendar override: %#v", got)
+	}
+	write(t, ctx, admin, map[string]any{"op": "calendar.set", "applicationId": appID, "name": "dst", "data": map[string]any{"timezone": "America/New_York", "weekdays": []int{0}}})
+	if got := read(t, ctx, admin); got["ok"] != true {
+		t.Fatalf("dst calendar.set: %#v", got)
+	}
+	write(t, ctx, admin, map[string]any{"op": "calendar.next", "applicationId": appID, "calendar": "dst", "localTime": "02:30", "at": "2025-03-08T00:00:00Z"})
+	if got := read(t, ctx, admin); got["error"] != "localTime does not exist on calendar date" {
+		t.Fatalf("DST gap accepted: %#v", got)
+	}
+}
+
+func TestMissedOccurrencePolicies(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "missed")
+	app := dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+	write(t, ctx, admin, map[string]any{"op": "calendar.set", "applicationId": appID, "name": "daily", "data": map[string]any{"timezone": "UTC", "weekdays": []int{0, 1, 2, 3, 4, 5, 6}}})
+	if got := read(t, ctx, admin); got["ok"] != true {
+		t.Fatalf("calendar.set: %#v", got)
+	}
+	definition := map[string]any{"initial": "emit", "states": map[string]any{
+		"emit": map[string]any{"type": "emit", "target": appID, "event": "missed.run", "next": "end"},
+		"end":  map[string]any{"type": "end"},
+	}}
+	write(t, ctx, admin, map[string]any{"op": "workflow.publish", "applicationId": appID, "name": "missed", "data": definition})
+	if got := read(t, ctx, admin); got["ok"] != true {
+		t.Fatalf("workflow.publish: %#v", got)
+	}
+	clock := time.Now().UTC().Format("15:04")
+	at := time.Now().UTC().AddDate(0, 0, -2).Truncate(time.Minute).Format(time.RFC3339)
+	for _, policy := range []string{"skip", "run_once_late", "catch_up"} {
+		write(t, ctx, admin, map[string]any{"op": "start-schedule.set", "applicationId": appID, "name": policy, "workflow": "missed", "calendar": "daily", "localTime": clock, "missedPolicy": policy, "at": at})
+		if got := read(t, ctx, admin); got["ok"] != true {
+			t.Fatalf("%s start schedule: %#v", policy, got)
+		}
+	}
+	time.Sleep(750 * time.Millisecond)
+	if got := workflowCount(t, ctx, admin, appID, "missed"); got != 4 {
+		t.Fatalf("missed workflows = %d, want skip=0 run_once_late=1 catch_up=3", got)
+	}
+}
+
 func testServer(t *testing.T, retryBase time.Duration) (context.Context, *httptest.Server, *websocket.Conn) {
 	t.Helper()
 	db := os.Getenv("CALCRON_TEST_DATABASE_URL")
@@ -336,6 +390,17 @@ func dashboardRows(t *testing.T, ctx context.Context, admin *websocket.Conn, nam
 		rows[i] = row.(map[string]any)
 	}
 	return rows
+}
+
+func workflowCount(t *testing.T, ctx context.Context, admin *websocket.Conn, appID, name string) int {
+	t.Helper()
+	count := 0
+	for _, row := range dashboardRows(t, ctx, admin, "workflows") {
+		if row["application_id"] == appID && row["workflow_name"] == name {
+			count++
+		}
+	}
+	return count
 }
 
 func waitForDeliveryStatus(t *testing.T, ctx context.Context, admin *websocket.Conn, id, status string) map[string]any {
