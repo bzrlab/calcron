@@ -150,7 +150,7 @@ func (s *Server) startWorkflow(ctx context.Context, app string, f frame) reply {
 	if e = tx.Commit(ctx); e != nil {
 		return fail(e.Error())
 	}
-	s.runWorkflow(ctx, id)
+	s.workflows.run(ctx, id)
 	return r
 }
 func (s *Server) signal(ctx context.Context, app string, f frame) reply {
@@ -186,11 +186,12 @@ func (s *Server) signal(ctx context.Context, app string, f frame) reply {
 		return fail(e.Error())
 	}
 	for _, id := range ids {
-		s.runWorkflow(ctx, id)
+		s.workflows.run(ctx, id)
 	}
 	return r
 }
-func (s *Server) runWorkflow(ctx context.Context, id string) {
+func (e *workflowEngine) run(ctx context.Context, id string) {
+	s := e.server
 	for n := 0; n < 100; n++ {
 		tx, e := s.db.Begin(ctx)
 		if e != nil {
@@ -309,16 +310,17 @@ func (s *Server) runWorkflow(ctx context.Context, id string) {
 	}
 }
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
-func (s *Server) wakeWorkflows(ctx context.Context) {
-	rows, e := s.db.Query(ctx, `update workflow_instances set status='running',updated_at=now() where id in (select id from workflow_instances where status='waiting_time' and wake_at<=now() limit 100 for update skip locked) returning id`)
-	if e != nil {
+func (e *workflowEngine) wake(ctx context.Context) {
+	s := e.server
+	rows, err := s.db.Query(ctx, `update workflow_instances set status='running',updated_at=now() where id in (select id from workflow_instances where status='waiting_time' and wake_at<=now() limit 100 for update skip locked) returning id`)
+	if err != nil {
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id string
 		if rows.Scan(&id) == nil {
-			s.runWorkflow(ctx, id)
+			e.run(ctx, id)
 		}
 	}
 }
@@ -485,25 +487,6 @@ func (s *Server) dashboardStats(ctx context.Context) reply {
 		return fail(e.Error())
 	}
 	return ok(map[string]int{"scheduled": scheduled, "pending": pending, "blocked": blocked, "workflows": workflows})
-}
-func (s *Server) dashboardList(ctx context.Context, f frame) reply {
-	queries := map[string]string{
-		"apps":       `select coalesce(json_agg(row_to_json(t)),'[]'::json) from (select id,namespace,created_at from applications order by created_at desc limit 100) t`,
-		"schedules":  `select coalesce(json_agg(row_to_json(t)),'[]'::json) from (select id,application_id,schedule_key,event,run_at,status,updated_at from schedules order by updated_at desc limit 100) t`,
-		"deliveries": `select coalesce(json_agg(row_to_json(t)),'[]'::json) from (select id,application_id,event,status,attempts,next_attempt_at,created_at from deliveries order by created_at desc limit 100) t`,
-		"workflows":  `select coalesce(json_agg(row_to_json(t)),'[]'::json) from (select id,application_id,workflow_name,workflow_version,current_state,status,updated_at from workflow_instances order by updated_at desc limit 100) t`,
-		"history":    `select coalesce(json_agg(row_to_json(t)),'[]'::json) from (select application_id,subject_type,subject_id,event,data,created_at from history order by id desc limit 100) t`,
-		"calendars":  `select coalesce(json_agg(row_to_json(t)),'[]'::json) from (select application_id,name,definition,updated_at from calendars order by updated_at desc limit 100) t`,
-	}
-	q, found := queries[f.Name]
-	if !found {
-		return fail("unknown dashboard list")
-	}
-	var raw []byte
-	if e := s.db.QueryRow(ctx, q).Scan(&raw); e != nil {
-		return fail(e.Error())
-	}
-	return ok(json.RawMessage(raw))
 }
 func (s *Server) replayDelivery(ctx context.Context, f frame) reply {
 	if f.DeliveryID == "" {

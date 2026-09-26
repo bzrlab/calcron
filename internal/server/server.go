@@ -3,14 +3,12 @@ package server
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,11 +23,14 @@ type Config struct {
 	RetryBase                          time.Duration
 }
 type Server struct {
-	db        *pgxpool.Pool
-	admin     string
-	hub       *hub
-	id        string
-	retryBase time.Duration
+	db             *pgxpool.Pool
+	admin          string
+	hub            *hub
+	id             string
+	retryBase      time.Duration
+	commands       *commandRouter
+	dashboardReads *dashboardRead
+	workflows      *workflowEngine
 }
 type hub struct {
 	sync.RWMutex
@@ -85,6 +86,9 @@ func New(ctx context.Context, c Config) (*Server, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase}
+	s.commands = newCommandRouter(s)
+	s.dashboardReads = newDashboardRead(db)
+	s.workflows = newWorkflowEngine(s)
 	go s.loop(ctx)
 	return s, nil
 }
@@ -115,7 +119,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(b, &a) != nil || a.Op != "auth" {
 		return
 	}
-	app, admin, err := s.authenticate(ctx, a.Token)
+	app, admin, err := s.commands.authenticate(ctx, a.Token)
 	if err != nil {
 		_ = p.send(ctx, reply{ID: a.ID, Error: "unauthorized"})
 		return
@@ -136,7 +140,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 			_ = p.send(ctx, reply{Error: "bad json"})
 			continue
 		}
-		res := s.handle(ctx, p, f)
+		res := s.commands.handle(ctx, p, f)
 		res.ID = f.ID
 		_ = p.send(ctx, res)
 	}
@@ -146,21 +150,6 @@ func (p *peer) send(ctx context.Context, v any) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.conn.Write(ctx, websocket.MessageText, b)
-}
-func (s *Server) authenticate(ctx context.Context, token string) (string, bool, error) {
-	if subtle.ConstantTimeCompare([]byte(token), []byte(s.admin)) == 1 {
-		return "admin", true, nil
-	}
-	parts := strings.Split(token, "_")
-	if len(parts) != 3 || parts[0] != "cc" {
-		return "", false, errors.New("bad token")
-	}
-	var app, hash string
-	err := s.db.QueryRow(ctx, `select t.application_id,t.secret_hash from application_tokens t where t.id=$1 and t.revoked_at is null`, parts[1]).Scan(&app, &hash)
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(parts[2])) != nil {
-		return "", false, errors.New("bad token")
-	}
-	return app, false, nil
 }
 func (h *hub) add(p *peer) {
 	h.Lock()
@@ -196,59 +185,6 @@ func (h *hub) peer(app string) *peer {
 	return nil
 }
 
-func (s *Server) handle(ctx context.Context, p *peer, f frame) reply {
-	if p.admin {
-		switch f.Op {
-		case "app.create":
-			return s.createApp(ctx, f)
-		case "app.token.rotate":
-			return s.rotateToken(ctx, f)
-		case "app.token.revoke":
-			return s.revokeToken(ctx, f)
-		case "workflow.publish":
-			return s.publishWorkflow(ctx, f)
-		case "calendar.set":
-			return s.setCalendar(ctx, f)
-		case "calendar.next":
-			return s.nextCalendar(ctx, f)
-		case "start-schedule.set":
-			return s.setStartSchedule(ctx, f)
-		case "dashboard.stats":
-			return s.dashboardStats(ctx)
-		case "dashboard.list":
-			return s.dashboardList(ctx, f)
-		case "delivery.replay":
-			return s.replayDelivery(ctx, f)
-		case "delivery.cancel":
-			return s.cancelDelivery(ctx, f)
-		default:
-			return fail("unknown admin op")
-		}
-	}
-	if f.IdempotencyKey == "" {
-		return fail("idempotencyKey required")
-	}
-	return s.serial(ctx, p.app, f.IdempotencyKey, func() reply {
-		switch f.Op {
-		case "schedule.set":
-			return s.set(ctx, p.app, f)
-		case "schedule.cancel":
-			return s.cancel(ctx, p.app, f)
-		case "schedule.extend":
-			return s.extend(ctx, p.app, f)
-		case "schedule.throttle":
-			return s.throttle(ctx, p.app, f)
-		case "delivery.ack":
-			return s.ack(ctx, p.app, f)
-		case "workflow.start":
-			return s.startWorkflow(ctx, p.app, f)
-		case "signal":
-			return s.signal(ctx, p.app, f)
-		default:
-			return fail("unknown op")
-		}
-	})
-}
 func fail(e string) reply { return reply{Error: e} }
 func ok(v any) reply      { return reply{OK: true, Data: v} }
 func idempotent(ctx context.Context, q pgx.Row) (reply, bool) {
@@ -587,7 +523,7 @@ func (s *Server) ack(ctx context.Context, app string, f frame) reply {
 		return fail(e.Error())
 	}
 	if workflowID != nil && nextState != nil {
-		s.runWorkflow(ctx, *workflowID)
+		s.workflows.run(ctx, *workflowID)
 	}
 	return r
 }
@@ -601,7 +537,7 @@ func (s *Server) loop(ctx context.Context) {
 		case <-tick.C:
 			s.makeDue(ctx)
 			s.deliver(ctx)
-			s.wakeWorkflows(ctx)
+			s.workflows.wake(ctx)
 			s.startRecurring(ctx)
 		}
 	}

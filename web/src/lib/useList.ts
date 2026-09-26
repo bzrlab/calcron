@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAdmin } from "../lib/admin";
+import type { DashboardList } from "./dashboard";
 
 // useList polls one dashboard.list name and returns rows. Re-fetches whenever
 // `refresh` changes so views can force an update after a mutation.
 export function useList<T = Record<string, unknown>>(
-  name: string,
+  name: DashboardList,
   refresh: number,
 ) {
   const { send, state } = useAdmin();
