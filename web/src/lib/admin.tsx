@@ -40,7 +40,15 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
     const c = new AdminClient(wsURL(), token);
     c.setHandlers({ onState: setState });
     clientRef.current = c;
-    await c.connect();
+    try {
+      await c.connect();
+      setError(null);
+    } catch (e) {
+      c.close();
+      if (clientRef.current === c) clientRef.current = null;
+      setState("closed");
+      setError(e instanceof Error ? e.message : "Calcron connection failed");
+    }
   }, []);
 
   const disconnect = useCallback(() => {
@@ -52,9 +60,15 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   const send = useCallback(async (body: Record<string, unknown> & { op: string }) => {
     const c = clientRef.current;
     if (!c) return { ok: false, error: "not connected" } satisfies Reply;
-    const r = await c.request(body);
-    setError(r.ok ? null : (r.error ?? "request failed"));
-    return r;
+    try {
+      const r = await c.request(body);
+      setError(r.ok ? null : (r.error ?? "request failed"));
+      return r;
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "request failed";
+      setError(error);
+      return { ok: false, error } satisfies Reply;
+    }
   }, []);
 
   const value = useMemo<Ctx>(

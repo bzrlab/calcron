@@ -50,9 +50,15 @@ func parseWorkflow(raw json.RawMessage) (workflowDefinition, error) {
 			if _, e := time.ParseDuration(s.After); e != nil || s.Next == "" {
 				return d, errors.New("invalid wait_time")
 			}
+			if _, ok := d.States[s.Next]; !ok {
+				return d, errors.New("workflow target not found")
+			}
 		case "wait_signal":
 			if s.Event == "" || s.Correlation == "" || s.Next == "" {
 				return d, errors.New("invalid wait_signal")
+			}
+			if _, ok := d.States[s.Next]; !ok {
+				return d, errors.New("workflow target not found")
 			}
 		case "branch":
 			if s.When == "" || s.True == "" || s.False == "" {
@@ -60,6 +66,12 @@ func parseWorkflow(raw json.RawMessage) (workflowDefinition, error) {
 			}
 			if _, e := compileCEL(s.When); e != nil {
 				return d, e
+			}
+			if _, ok := d.States[s.True]; !ok {
+				return d, errors.New("workflow target not found")
+			}
+			if _, ok := d.States[s.False]; !ok {
+				return d, errors.New("workflow target not found")
 			}
 		case "emit":
 			if s.Target == "" || s.Event == "" || s.Next == "" {
@@ -69,6 +81,9 @@ func parseWorkflow(raw json.RawMessage) (workflowDefinition, error) {
 				if _, e := compileCEL(s.DataExpr); e != nil {
 					return d, e
 				}
+			}
+			if _, ok := d.States[s.Next]; !ok {
+				return d, errors.New("workflow target not found")
 			}
 		default:
 			return d, errors.New("unknown workflow state")

@@ -14,9 +14,12 @@ export function useList<T = Record<string, unknown>>(
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await send({ op: "dashboard.list", name });
-    if (r.ok) setRows((r.data as T[]) ?? []);
-    setLoading(false);
+    try {
+      const r = await send({ op: "dashboard.list", name });
+      if (r.ok) setRows((r.data as T[]) ?? []);
+    } finally {
+      setLoading(false);
+    }
   }, [send, name]);
 
   useEffect(() => {

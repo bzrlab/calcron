@@ -44,9 +44,12 @@ export function Publish() {
   async function run(body: Record<string, unknown> & { op: string }) {
     setBusy(true);
     setResult(null);
-    const r = await send(body);
-    setBusy(false);
-    setResult({ ok: r.ok, text: r.ok ? JSON.stringify(r.data) : r.error ?? "failed" });
+    try {
+      const r = await send(body);
+      setResult({ ok: r.ok, text: r.ok ? JSON.stringify(r.data) : r.error ?? "failed" });
+    } finally {
+      setBusy(false);
+    }
   }
 
   function parse(raw: string): unknown | undefined {

@@ -23,9 +23,12 @@ export function Apps({ refresh, bump }: { refresh: number; bump: () => void }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await send({ op: "dashboard.list", name: "apps" });
-    if (r.ok) setRows((r.data as App[]) ?? []);
-    setLoading(false);
+    try {
+      const r = await send({ op: "dashboard.list", name: "apps" });
+      if (r.ok) setRows((r.data as App[]) ?? []);
+    } finally {
+      setLoading(false);
+    }
   }, [send]);
 
   useEffect(() => {
@@ -34,24 +37,30 @@ export function Apps({ refresh, bump }: { refresh: number; bump: () => void }) {
 
   async function create() {
     setBusy(true);
-    const r = await send({ op: "app.create", name, namespace });
-    setBusy(false);
-    if (r.ok) {
-      setCreated(r.data as { applicationId: string; token: string });
-      setShowCreate(false);
-      setName("");
-      setNamespace("");
-      void load();
-      bump();
+    try {
+      const r = await send({ op: "app.create", name, namespace });
+      if (r.ok) {
+        setCreated(r.data as { applicationId: string; token: string });
+        setShowCreate(false);
+        setName("");
+        setNamespace("");
+        void load();
+        bump();
+      }
+    } finally {
+      setBusy(false);
     }
   }
 
   async function rotate() {
     if (!rotateFor) return;
     setBusy(true);
-    const r = await send({ op: "app.token.rotate", applicationId: rotateFor.id });
-    setBusy(false);
-    if (r.ok) setRotated(r.data as { tokenId: string; token: string });
+    try {
+      const r = await send({ op: "app.token.rotate", applicationId: rotateFor.id });
+      if (r.ok) setRotated(r.data as { tokenId: string; token: string });
+    } finally {
+      setBusy(false);
+    }
   }
   const columns: Column<App>[] = [
     { key: "namespace", label: "Namespace", render: (a) => <span className="font-medium">{a.namespace}</span> },
