@@ -194,7 +194,8 @@ func TestOfflineDeliveryDoesNotRetryAndReconnectsWithSameID(t *testing.T) {
 }
 
 func TestBlockedDeliveryCanReplayAndCancel(t *testing.T) {
-	ctx, h, admin := testServer(t, time.Millisecond)
+	retryBase := 100 * time.Millisecond
+	ctx, h, admin := testServer(t, retryBase)
 	_, token := newApp(t, ctx, admin, "recovery")
 	app := dial(t, ctx, h.URL, token)
 	defer app.CloseNow()
@@ -203,12 +204,21 @@ func TestBlockedDeliveryCanReplayAndCancel(t *testing.T) {
 		t.Fatalf("set: %#v", got)
 	}
 	var first map[string]any
-	for range 5 {
+	for attempt := range 5 {
 		got := delivery(t, ctx, app)
 		if first == nil {
 			first = got
 		} else if got["deliveryId"] != first["deliveryId"] {
 			t.Fatalf("retry changed delivery ID: first=%#v got=%#v", first, got)
+		}
+		row := waitForDeliveryAttempts(t, ctx, admin, first["deliveryId"].(string), float64(attempt+1))
+		next, err := time.Parse(time.RFC3339Nano, row["next_attempt_at"].(string))
+		if err != nil {
+			t.Fatalf("next attempt timestamp: %v", err)
+		}
+		expected := retryBase * time.Duration(1<<attempt)
+		if remaining := time.Until(next); remaining < expected/2 {
+			t.Fatalf("attempt %d retry delay = %v, want at least %v", attempt+1, remaining, expected/2)
 		}
 	}
 	deliveryID := first["deliveryId"].(string)
@@ -257,6 +267,29 @@ func TestTokenRevocationPreservesOverlappingTokenAndBlocksAdminOps(t *testing.T)
 	dialUnauthorized(t, ctx, h.URL, replacement)
 	app = dial(t, ctx, h.URL, original)
 	defer app.CloseNow()
+}
+
+func TestApplicationCannotAcknowledgeAnotherApplicationsDelivery(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	_, firstToken := newApp(t, ctx, admin, "first")
+	_, secondToken := newApp(t, ctx, admin, "second")
+	first := dial(t, ctx, h.URL, firstToken)
+	defer first.CloseNow()
+	second := dial(t, ctx, h.URL, secondToken)
+	defer second.CloseNow()
+	write(t, ctx, second, map[string]any{"op": "schedule.set", "idempotencyKey": "second-set", "key": "order:second", "event": "order.close", "after": "1ms"})
+	if got := read(t, ctx, second); got["ok"] != true {
+		t.Fatalf("set: %#v", got)
+	}
+	delivered := delivery(t, ctx, second)
+	write(t, ctx, first, map[string]any{"op": "delivery.ack", "idempotencyKey": "first-ack", "deliveryId": delivered["deliveryId"]})
+	if got := read(t, ctx, first); got["ok"] != true || got["data"].(map[string]any)["acked"] != false {
+		t.Fatalf("first application acknowledged second delivery: %#v", got)
+	}
+	write(t, ctx, second, map[string]any{"op": "delivery.ack", "idempotencyKey": "second-ack", "deliveryId": delivered["deliveryId"]})
+	if got := read(t, ctx, second); got["ok"] != true || got["data"].(map[string]any)["acked"] != true {
+		t.Fatalf("second application acknowledgement: %#v", got)
+	}
 }
 
 func testServer(t *testing.T, retryBase time.Duration) (context.Context, *httptest.Server, *websocket.Conn) {
@@ -320,6 +353,21 @@ func waitForDeliveryStatus(t *testing.T, ctx context.Context, admin *websocket.C
 	return nil
 }
 
+func waitForDeliveryAttempts(t *testing.T, ctx context.Context, admin *websocket.Conn, id string, attempts float64) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, row := range dashboardRows(t, ctx, admin, "deliveries") {
+			if row["id"] == id && row["attempts"] == attempts {
+				return row
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("delivery %s did not reach %g attempts", id, attempts)
+	return nil
+}
+
 func dialUnauthorized(t *testing.T, ctx context.Context, rawURL, token string) {
 	t.Helper()
 	c, _, err := websocket.Dial(ctx, "ws"+rawURL[4:]+"/ws", nil)
@@ -329,7 +377,7 @@ func dialUnauthorized(t *testing.T, ctx context.Context, rawURL, token string) {
 	defer c.CloseNow()
 	write(t, ctx, c, map[string]string{"op": "auth", "token": token})
 	if got := read(t, ctx, c); got["error"] != "unauthorized" {
-		t.Fatalf("revoked token authenticated: %#v", got)
+		t.Fatal("revoked token authenticated")
 	}
 }
 
@@ -354,7 +402,7 @@ func dial(t *testing.T, ctx context.Context, rawURL, token string) *websocket.Co
 	}
 	write(t, ctx, c, map[string]string{"op": "auth", "token": token})
 	if got := read(t, ctx, c); got["ok"] != true {
-		t.Fatalf("auth: %#v", got)
+		t.Fatal("authentication failed")
 	}
 	return c
 }
