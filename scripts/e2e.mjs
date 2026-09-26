@@ -1,6 +1,10 @@
+import { execFileSync } from "node:child_process";
+
 const base = process.env.CALCRON_URL ?? "http://127.0.0.1:8080";
 const second = process.env.CALCRON_SECOND_URL;
 const adminToken = process.env.CALCRON_ADMIN_TOKEN ?? "change-me";
+const composeProject = process.env.CALCRON_E2E_PROJECT;
+const composeFile = process.env.CALCRON_E2E_COMPOSE_FILE ?? "compose.yaml";
 const wsURL = url => url.replace(/^http/, "ws") + "/ws";
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 class Client {
@@ -15,6 +19,17 @@ const key = label => `e2e:${label}:${Date.now()}:${Math.random()}`;
 const assert = (v, m) => { if (!v) throw new Error(m); };
 const noEvent = async (c, event, ms = 400) => { try { await c.event(x => x.event === event, ms); throw new Error(`unexpected ${event}`); } catch (e) { if (e.message !== "delivery timeout") throw e; } };
 const connect = (url, token) => new Client(url, token).connect();
+const planNodes = plan => [plan, ...(plan.Plans ?? []).flatMap(planNodes)];
+const queryPlan = sql => {
+  if (!composeProject) return null;
+  const raw = execFileSync("docker", ["compose", "--project-name", composeProject, "--file", composeFile, "exec", "-T", "-e", "PGOPTIONS=-c enable_seqscan=off", "postgres", "psql", "-U", "calcron", "-d", "calcron", "-X", "-q", "-t", "-A", "-c", `explain (format json) ${sql}`], { encoding: "utf8" });
+  return JSON.parse(raw)[0].Plan;
+};
+const assertPlanUses = (label, sql, index) => {
+  const plan = queryPlan(sql);
+  if (!plan) return;
+  assert(planNodes(plan).some(node => node["Index Name"] === index), `${label} did not use ${index}: ${JSON.stringify(plan)}`);
+};
 
 if (!(await fetch(base + "/health")).ok) throw new Error("health failed");
 const admin = await connect(base, adminToken);
@@ -50,4 +65,7 @@ const rotated = await admin.request({ op: "app.token.rotate", applicationId: cre
 for (const name of ["apps", "schedules", "deliveries", "workflows", "calendars", "history"]) assert(Array.isArray(await admin.request({ op: "dashboard.list", name })), `dashboard ${name} failed`);
 
 if (second) { const multi = await admin.request({ op: "app.create", name: "multi", namespace: "multi-" + Date.now() }); const one = await connect(base, multi.token); const two = await connect(second, multi.token); const hits = []; await one.request({ op: "schedule.set", idempotencyKey: key("multi"), key: "multi", event: "multi.event", after: "50ms" }); const first = one.event(x => x.event === "multi.event", 700).then(x => { hits.push(x); return { x, c: one }; }); const other = two.event(x => x.event === "multi.event", 700).then(x => { hits.push(x); return { x, c: two }; }); const winner = await Promise.race([first, other]); await winner.c.request({ op: "delivery.ack", deliveryId: winner.x.deliveryId, idempotencyKey: key("multi-ack") }); await Promise.allSettled([first, other]); await sleep(100); assert(hits.filter(x => x.deliveryId === winner.x.deliveryId).length === 1 && one.events.concat(two.events).filter(x => x.deliveryId === winner.x.deliveryId).length === 0, "multi-instance lease contention delivered twice"); one.close(); two.close(); }
-admin.close(); app.close(); back.close(); console.log("E2E PASS");
+assertPlanUses("due schedules", "select id,application_id,event,payload from schedules where status='scheduled' and run_at<=now() order by run_at limit 100 for update skip locked", "schedules_due_idx");
+assertPlanUses("pending deliveries", "select id,application_id,coalesce(schedule_id,''),event,payload,attempts from deliveries where status='pending' and next_attempt_at<=now() order by next_attempt_at limit 100", "deliveries_pending_idx");
+assertPlanUses("dashboard history", "select application_id,subject_type,subject_id,event,data,created_at from history order by id desc limit 100", "history_pkey");
+admin.close(); app.close(); back.close(); console.log("e2e passed");
