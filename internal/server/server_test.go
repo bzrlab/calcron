@@ -305,6 +305,10 @@ func TestCalendarNextHonorsOverridesAndDST(t *testing.T) {
 	if got := read(t, ctx, admin); got["ok"] != true || got["data"].(map[string]any)["nextAt"] != "2025-01-04T14:00:00Z" {
 		t.Fatalf("calendar override: %#v", got)
 	}
+	write(t, ctx, admin, map[string]any{"op": "calendar.next", "applicationId": appID, "calendar": "ny", "localTime": "09:00", "at": "2025-01-04T15:00:00Z"})
+	if got := read(t, ctx, admin); got["ok"] != true || got["data"].(map[string]any)["nextAt"] != "2025-01-13T14:00:00Z" {
+		t.Fatalf("calendar excluded weekday: %#v", got)
+	}
 	write(t, ctx, admin, map[string]any{"op": "calendar.set", "applicationId": appID, "name": "dst", "data": map[string]any{"timezone": "America/New_York", "weekdays": []int{0}}})
 	if got := read(t, ctx, admin); got["ok"] != true {
 		t.Fatalf("dst calendar.set: %#v", got)
