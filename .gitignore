@@ -1,3 +1,4 @@
 sdk/node/node_modules/
 web/node_modules/
 *.tsbuildinfo
+.unlazy/
