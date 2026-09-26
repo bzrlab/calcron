@@ -1,0 +1,39 @@
+---
+description: Go conventions for Calcron server and SDK code
+globs: **/*.go
+alwaysApply: false
+---
+
+# Go conventions
+
+Go 1.25 · pgx/v5 · coder/websocket · cel-go. Keep diffs small; prefer stdlib and already-installed deps.
+
+## Structure
+
+- `internal/server` — protocol + handlers. Split by concern as it grows: scheduler, workflow interpreter, calendars, delivery, identity. One deep module per file group, not one god file.
+- Handlers return `reply`; never call `log.Fatal` or panic on request paths.
+- SQL stays in the module that owns the transaction. Don't scatter `Begin`/`Commit` across handlers — one seam owns idempotency + history writes.
+
+## Errors
+
+- Return errors up; convert to `fail(...)` at the protocol edge.
+- `errors.Is(err, pgx.ErrNoRows)` for expected-empty cases; don't mask real errors.
+- Never log token values or secrets.
+
+## Concurrency
+
+- The hub guards peers with its own mutex; `peer.send` guards the socket. Don't send on a conn outside `peer.send`.
+- Background loops take `context.Context` and exit on `ctx.Done()`.
+- Leases (`lease_owner`, `locked_until`) are the only claim mechanism; always release on the failure path.
+
+## Tests
+
+- Integration tests hit the real WebSocket protocol against a temp PostgreSQL (`CALCRON_TEST_DATABASE_URL`); skip when unset.
+- Assert observable schedule/workflow/delivery/ack/signal behaviour, not private functions.
+- Add one runnable check for any non-trivial branch, loop, or parser (see ponytail rule).
+
+## Style
+
+- Table-driven tests where they fit; `t.Helper()` in helpers.
+- Small interfaces at seams; concrete types otherwise.
+- `gofmt` clean. No unused `_ = x` placeholders left behind.

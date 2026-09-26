@@ -1,0 +1,37 @@
+---
+description: Calcron domain vocabulary, module boundaries, and design principles
+alwaysApply: true
+---
+
+# Calcron architecture
+
+Private durable scheduler + workflow engine. One Go binary, PostgreSQL sole store, WebSocket-only app protocol. Read `CONTEXT.md` and `docs/specs/0001-calcron.md` before structural work. ADRs in `docs/adr/` are binding — do not re-litigate a decision without surfacing the conflict.
+
+## Domain terms — use exactly (from CONTEXT.md)
+
+Application · Schedule · Workflow definition · Workflow version · Workflow instance · Workflow state · Signal · Correlation key · Idempotency key · Command · Condition · Business calendar · Start schedule · Missed occurrence policy · Schedule key · Lifecycle policy · Chain · Extension · Throttle · Delivery.
+
+Never substitute: cron job/timer/task (for Schedule), job/session (for Workflow instance), callback/response (for Signal), webhook/execution (for Delivery).
+
+## Module vocabulary — use exactly
+
+module · interface · implementation · depth · deep · shallow · seam · adapter · leverage · locality.
+
+Never substitute: component/service/unit (for module), API/signature (for interface), boundary (for seam), layer/wrapper (for module).
+
+## Design principles
+
+- **Deep modules**: small interface, large implementation. Target module boundaries per spec: protocol, identity/applications, direct scheduler, workflow interpreter, calendars, delivery, store/migrations, dashboard.
+- **Seam discipline**: one adapter = hypothetical seam, two = real one. Don't add a port for a single implementation.
+- **Deletion test**: if deleting a module vanishes complexity it was a pass-through; if complexity reappears across callers it earned its keep.
+- **The interface is the test surface**: primary test seam is the WebSocket protocol against a real temp PostgreSQL (`CALCRON_TEST_DATABASE_URL`). Assert observable behaviour, not private functions.
+- **Idempotency is the correctness guarantee**: every state-changing command and signal is idempotent by key. Keep that invariant in one place, not copied per handler.
+- **Durability**: delivery is at-least-once. Acknowledged ≠ business completion. Due work leased via `SKIP LOCKED`.
+
+## Invariants not to break
+
+- No app-specific behaviour (Discord, MFS, payment, HTTP adapter) inside Calcron.
+- No arbitrary Go/JS execution. CEL is read-only.
+- Workflow versions immutable; instances pinned.
+- Tokens shown once, stored hashed, one-way.
+- No Redis/broker/K8s/separate workers in V1.

@@ -1,0 +1,35 @@
+---
+description: PostgreSQL schema, migrations, and query conventions
+globs: **/*.sql
+alwaysApply: false
+---
+
+# PostgreSQL conventions
+
+PostgreSQL is the sole durable store (ADR-0018). No Redis, broker, or cache layer in V1.
+
+## Migrations
+
+- `db/migrations/0001_init.sql` is embedded via `//go:embed` in `migrations.go` and run on boot.
+- Migrations must be idempotent: `create table if not exists`, `alter table ... add column if not exists`.
+- Never drop or rename a column in a migration that existing instances run against. Additive only in V1.
+
+## Schema rules
+
+- Every app-scoped table keys on `application_id` with a foreign key to `applications(id)`.
+- Status columns use `check (... in (...))` — no free-text states.
+- Append-only `history`; never update or delete history rows in V1 (ADR-0023).
+- Tokens: store `secret_hash` only, never plaintext (ADR-0024).
+
+## Queries
+
+- Due work and pending delivery use `for update skip locked` with a `limit`; keep the partial indexes (`schedules_due_idx`, `deliveries_pending_idx`, `deliveries_claim_idx`) aligned with the `where` clause.
+- Lease claim must be a single `update ... returning` — do not select then update in two round-trips.
+- Idempotency lookup is `primary key (application_id, key)`; the response is stored as `jsonb`.
+- Index any new foreign key you filter on.
+- Run `explain` on due-work and delivery queries before performance work; indexes must match actual filtering.
+
+## JSON
+
+- Workflow definitions, calendar definitions, payloads, and state are `jsonb`.
+- Use `coalesce(json_agg(row_to_json(t)),'[]'::json)` for dashboard list queries.

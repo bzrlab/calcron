@@ -1,0 +1,32 @@
+---
+description: Testing conventions for Calcron
+globs: **/*_test.go
+alwaysApply: false
+---
+
+# Tests
+
+Primary seam is the external WebSocket protocol against a real temporary PostgreSQL (spec 0001). Test observable behaviour, not private functions.
+
+## Setup
+
+- Require `CALCRON_TEST_DATABASE_URL`; `t.Skip` when unset.
+- Boot `server.New` + `httptest.NewServer(s.Handler())`; dial admin, then app.
+- Use a unique namespace per test (`time.Now().Format(...)`) so tests don't collide.
+
+## What to assert
+
+- Schedule/workflow/delivery/ack/signal behaviour through protocol replies and received deliveries.
+- Idempotency: send the same key twice, assert the original result returns and only one transition exists.
+- At-least-once: disconnect before ack, assert the same delivery ID returns on reconnect.
+- Correlation isolation: concurrent instances waiting on the same event, different keys.
+- Calendars across timezone boundaries, overrides, DST, and each missed-occurrence policy.
+- Permission boundaries: admin-only publish, app-scoped authorisation.
+- Never log token values in failures.
+
+## Style
+
+- `t.Helper()` in dial/read/write/delivery helpers.
+- One runnable check per non-trivial branch, loop, or parser.
+- Tests must survive internal refactors — describe behaviour, not implementation. If a test breaks on a refactor, it was testing past the interface.
+- Query-plan checks for due-work and pending-delivery before performance work.

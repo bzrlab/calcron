@@ -1,0 +1,35 @@
+---
+description: Rules for the declarative workflow interpreter and CEL conditions
+alwaysApply: false
+---
+
+# Workflow definitions
+
+Calcron runs versioned declarative finite-state machines (ADR-0006, ADR-0014). No app-specific code, no arbitrary Go/JS.
+
+## Definition shape
+
+```json
+{ "initial": "state", "states": { "state": { "type": "...", "...": "..." } } }
+```
+
+V1 state types: `wait_time`, `wait_signal`, `branch`, `emit`, `end`. Loops are explicit transitions.
+
+- `wait_time` — `after` duration + `next`.
+- `wait_signal` — `event` + `correlationKey` + `next`. Correlation is explicit (ADR-0009); never infer from payload.
+- `branch` — read-only CEL `when` + `true`/`false` targets.
+- `emit` — `target` application + `event` + optional `dataExpr` + `next`.
+- `end` — terminal.
+
+## Rules
+
+- Validate the whole definition at publish time; publishing creates an immutable version (ADR-0013). New instances use the newest version; existing instances never migrate in V1.
+- Only admin credentials publish definitions (ADR-0020).
+- CEL is restricted to read-only evaluation over `input` and `state`. No network, DB, imports, or side effects (ADR-0007).
+- Parse/compile the definition once; do not re-parse inside the interpreter loop.
+- An `emit` state waits for acknowledgement before advancing (ADR-0011). A signal advances only the instance matching event + correlation key.
+
+## Calendar-aware starts
+
+- Named business calendars hold IANA timezone, eligible weekdays, date overrides (ADR-0008). V1 does not fetch external holidays.
+- Named start schedules create an instance per eligible calendar time; each declares `skip`, `run_once_late`, or `catch_up` — there is no default (ADR-0015, ADR-0016).
