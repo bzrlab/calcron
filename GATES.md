@@ -13,7 +13,7 @@ Scope: replace the inline HTML dashboard with a React/TypeScript admin UI built 
   CHECK: npm run build && echo BUILD OK
   EXPECT: /BUILD OK/
   CWD: web
-  EVIDENCE: automatic-evidence=v1; definition-sha256=e3a24e3c5be49c69fd5664b5874d926b914ab8bd498b28ff1ec2bbb372692e59; exit=0; EXPECT=matched; output-sha256=b059e51c9b383dfd123d1416cbb7cf03b6b618703b00fd35d2af20e07776866e; output-bytes=523; shell=/bin/sh; cwd=/mnt/Development/Projects/calcron/web; path=4de336199479/49 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=e3a24e3c5be49c69fd5664b5874d926b914ab8bd498b28ff1ec2bbb372692e59; exit=0; EXPECT=matched; output-sha256=8b318319be09f3124488ea189d9b9519b0fada24a1cb1cdbf152b6f8f8fdef3f; output-bytes=523; shell=/bin/sh; cwd=/mnt/Development/Projects/calcron/web; path=4de336199479/49 entries
 
 - [x] G2: TypeScript reports no type errors
   CHECK: npm run typecheck && echo TYPECHECK OK
@@ -34,7 +34,7 @@ Scope: replace the inline HTML dashboard with a React/TypeScript admin UI built 
 - [x] G5: full Go suite still passes against a real PostgreSQL
   CHECK: go test ./... -count=1 && echo SUITE OK
   EXPECT: /SUITE OK/
-  EVIDENCE: automatic-evidence=v1; definition-sha256=1edcc145f6e162f39669fa28c144fc94bb931c72474f965898046c91339e4652; exit=0; EXPECT=matched; output-sha256=950ff064dbc2531bc2f1a6e17a16d5fb08afe9690319db4bac2f1688c9695bc8; output-bytes=218; shell=/bin/sh; cwd=/mnt/Development/Projects/calcron; path=4de336199479/49 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=1edcc145f6e162f39669fa28c144fc94bb931c72474f965898046c91339e4652; exit=0; EXPECT=matched; output-sha256=4839ed666a0bd8dd2c3bbae61b8a8c3624560be2e673ef0467567410a083ac38; output-bytes=218; shell=/bin/sh; cwd=/mnt/Development/Projects/calcron; path=4de336199479/49 entries
 
 - [x] G6: dashboard serves the real build, not the not-built placeholder
   CHECK: node scripts/check-dashboard.mjs
