@@ -15,7 +15,7 @@ The test-first compile-time RED was two untyped JSON delivery IDs in the new tes
 Validation:
 
 ```sh
-CALCRON_TEST_DATABASE_URL=... go test ./internal/server -run 'TestScheduleIdempotencyReturnsOriginalResult|TestOfflineDeliveryDoesNotRetryAndReconnectsWithSameID|TestBlockedDeliveryCanReplayAndCancel|TestTokenRevocationPreservesOverlappingTokenAndBlocksAdminOps' -count=1
+CALCRON_TEST_DATABASE_URL=... go test ./internal/server -run 'TestScheduleIdempotencyReturnsOriginalResult|TestOfflineDeliveryDoesNotRetryAndReconnectsWithSameID|TestBlockedDeliveryCanReplayAndCancel|TestTokenRevocationPreservesOverlappingTokenAndBlocksAdminOps|TestApplicationCannotAcknowledgeAnotherApplicationsDelivery' -count=1
 # PASS
 
 CALCRON_TEST_DATABASE_URL=... go test ./internal/server -cover -count=1
