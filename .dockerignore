@@ -1,0 +1,4 @@
+.git
+web/node_modules
+sdk/node/node_modules
+internal/server/dashboard/dist

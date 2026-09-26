@@ -99,11 +99,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.dashboard)
 	return mux
 }
-func (s *Server) dashboard(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("content-type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(`<!doctype html><title>Calcron</title><style>body{font:14px system-ui;margin:3rem;max-width:75rem}input,button{padding:.5rem;margin:.15rem}pre{background:#111;color:#ddd;padding:1rem;min-height:24rem;white-space:pre-wrap}</style><h1>Calcron</h1><input id=t type=password placeholder="admin token"><button onclick="go()">connect</button><button onclick="send({op:'dashboard.stats'})">stats</button><button onclick="view('apps')">apps</button><button onclick="view('schedules')">schedules</button><button onclick="view('deliveries')">deliveries</button><button onclick="view('workflows')">workflows</button><button onclick="view('calendars')">calendars</button><button onclick="view('history')">history</button><button onclick="delivery('delivery.replay')">replay</button><button onclick="delivery('delivery.cancel')">cancel</button><pre id=o>offline</pre><script>let w,o,n=0;function send(x){w.send(JSON.stringify({id:String(++n),...x}))}function view(name){send({op:'dashboard.list',name})}function go(){w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');w.onopen=()=>send({op:'auth',token:t.value});w.onmessage=e=>{o.textContent=e.data+'\n'+o.textContent;try{if(JSON.parse(e.data).data?.admin){send({op:'dashboard.stats'});view('deliveries')}}catch{}}}function delivery(op){let id=prompt('delivery ID');if(id)send({op,deliveryId:id})}</script>`))
-}
-
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {

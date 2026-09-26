@@ -6,7 +6,20 @@ Private durable scheduler. Requires PostgreSQL and `CALCRON_ADMIN_TOKEN`.
 docker compose up --build
 ```
 
-Open `http://localhost:8080`. Apps connect to `ws://localhost:8080/ws`.
+Open `http://localhost:8080` for the admin dashboard. Apps connect to `ws://localhost:8080/ws`.
+
+## Admin dashboard
+
+React + TypeScript + Tailwind/DaisyUI, built with Vite and embedded in the Go binary.
+
+```sh
+cd web
+npm install
+npm run build     # writes internal/server/dashboard/dist
+cd .. && go build ./cmd/calcron
+```
+
+`npm run dev` serves the dashboard with the WebSocket proxied to a local Calcron on `:8080`.
 
 Admin first sends `{"op":"auth","token":"..."}`, then `app.create`. It returns a one-time `cc_<id>_<secret>` application token.
 
