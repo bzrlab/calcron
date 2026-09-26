@@ -340,8 +340,7 @@ func TestMissedOccurrencePolicies(t *testing.T) {
 			t.Fatalf("%s start schedule: %#v", policy, got)
 		}
 	}
-	time.Sleep(750 * time.Millisecond)
-	if got := workflowCount(t, ctx, admin, appID, "missed"); got != 4 {
+	if got := waitForWorkflowCount(t, ctx, admin, appID, "missed", 4); got != 4 {
 		t.Fatalf("missed workflows = %d, want skip=0 run_once_late=1 catch_up=3", got)
 	}
 }
@@ -401,6 +400,18 @@ func workflowCount(t *testing.T, ctx context.Context, admin *websocket.Conn, app
 		}
 	}
 	return count
+}
+
+func waitForWorkflowCount(t *testing.T, ctx context.Context, admin *websocket.Conn, appID, name string, want int) int {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := workflowCount(t, ctx, admin, appID, name); got == want {
+			return got
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return workflowCount(t, ctx, admin, appID, name)
 }
 
 func waitForDeliveryStatus(t *testing.T, ctx context.Context, admin *websocket.Conn, id, status string) map[string]any {
