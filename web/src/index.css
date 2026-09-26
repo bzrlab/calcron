@@ -1,0 +1,48 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: false;
+}
+
+/* Calcron admin theme — single dark operational surface, indigo accent,
+   emerald/amber/red reserved for schedule + delivery status only. */
+@plugin "daisyui/theme" {
+  name: "calcron";
+  default: true;
+  prefersdark: true;
+  color-scheme: dark;
+
+  --color-base-100: oklch(21% 0.02 264);
+  --color-base-200: oklch(17% 0.02 264);
+  --color-base-300: oklch(14% 0.02 264);
+  --color-base-content: oklch(92% 0.01 264);
+
+  --color-primary: oklch(62% 0.18 268);
+  --color-primary-content: oklch(98% 0.01 268);
+  --color-secondary: oklch(70% 0.02 264);
+  --color-secondary-content: oklch(20% 0.02 264);
+  --color-accent: oklch(72% 0.15 190);
+  --color-accent-content: oklch(18% 0.02 190);
+
+  --color-neutral: oklch(26% 0.02 264);
+  --color-neutral-content: oklch(90% 0.01 264);
+  --color-info: oklch(72% 0.12 230);
+  --color-info-content: oklch(18% 0.02 230);
+  --color-success: oklch(72% 0.16 150);
+  --color-success-content: oklch(18% 0.03 150);
+  --color-warning: oklch(80% 0.15 80);
+  --color-warning-content: oklch(22% 0.03 80);
+  --color-error: oklch(66% 0.2 25);
+  --color-error-content: oklch(98% 0.01 25);
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.4rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+html, body, #root { height: 100%; }
+body { margin: 0; }
