@@ -8,6 +8,12 @@ docker compose up --build
 
 Open `http://localhost:8080` for the admin dashboard. Apps connect to `ws://localhost:8080/ws`.
 
+## Application SDKs
+
+Use the Node/TypeScript or Go client through the [SDK guide](docs/sdk.md). It
+explains the command surface, delivery semantics, idempotency, and complete
+examples.
+
 ## Admin dashboard
 
 React + TypeScript + Tailwind/DaisyUI, built with Vite and embedded in the Go binary.
@@ -25,6 +31,6 @@ Admin first sends `{"op":"auth","token":"..."}`, then `app.create`. It returns a
 
 Application commands: `schedule.set`, `schedule.cancel`, `schedule.extend`, `schedule.throttle`, `delivery.ack`, `workflow.start`, `signal`.
 
-Admin commands: `workflow.publish`, `calendar.set`, `start-schedule.set`, `dashboard.stats`, `dashboard.list`, `delivery.replay`, `delivery.cancel`, `app.token.rotate`, `app.token.revoke`.
+Admin commands: `workflow.publish`, `calendar.set`, `calendar.next`, `calendar.occurrences`, `start-schedule.set`, `dashboard.stats`, `dashboard.list`, `delivery.replay`, `delivery.cancel`, `app.token.rotate`, `app.token.revoke`.
 
 Rotation creates an additional application token. Revoke old token only after every application instance uses replacement token.

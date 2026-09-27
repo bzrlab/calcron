@@ -96,3 +96,27 @@ test("surfaces protocol errors", async () => {
   await assert.rejects(client.cancel("missing", "cancel:missing:v1"), /schedule not found/);
   client.close();
 });
+
+test("rejects invalid credentials during connect", async () => {
+  installFakeWebSocket();
+  const client = new Calcron("ws://calcron.test/ws", "invalid");
+  const connecting = client.connect();
+  const socket = FakeWebSocket.connections[0]!;
+  socket.respond = frame => socket.reply({ id: frame.id, ok: false, error: "bad token" });
+  await assert.rejects(connecting, /bad token/);
+  client.close();
+});
+
+test("reconnects after a transport loss", async () => {
+  const { client, socket } = await connected();
+  socket.close();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("no reconnect")), 1_000);
+    const check = () => {
+      if (FakeWebSocket.connections.length === 2) { clearTimeout(timer); resolve(); return; }
+      setTimeout(check, 10);
+    };
+    check();
+  });
+  client.close();
+});

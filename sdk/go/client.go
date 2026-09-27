@@ -36,10 +36,44 @@ type Event struct {
 	Data     json.RawMessage
 	client   *Client
 }
+
+// ScheduleResult identifies a schedule and its RFC3339 deadline.
+type ScheduleResult struct {
+	ScheduleID string    `json:"scheduleId"`
+	RunAt      time.Time `json:"runAt"`
+}
+
+// DeadlineResult is returned when an existing schedule is extended.
+type DeadlineResult struct {
+	RunAt time.Time `json:"runAt"`
+}
+type CancelResult struct {
+	Cancelled bool `json:"cancelled"`
+}
+type ThrottleResult struct {
+	Triggered bool `json:"triggered"`
+}
+type WorkflowResult struct {
+	InstanceID string `json:"instanceId"`
+}
+type SignalResult struct {
+	Matched int `json:"matched"`
+}
+type AckResult struct {
+	Acked bool `json:"acked"`
+}
+
 type Schedule struct {
 	Key, Event, After, At, IdempotencyKey string
 	Data                                  any
 	Chain                                 any
+}
+
+// Throttle permits one immediate delivery for Key, then suppresses triggers for Cooldown.
+type Throttle struct {
+	Key, Event, Cooldown, IdempotencyKey string
+	Data                                 any
+	Chain                                any
 }
 
 func Connect(ctx context.Context, url, token string) (*Client, error) {
@@ -84,29 +118,37 @@ func (c *Client) On(event string, fn func(Event)) {
 	defer c.mu.Unlock()
 	c.handlers[event] = fn
 }
-func (e Event) Ack(ctx context.Context) error {
-	_, err := e.client.request(ctx, map[string]any{"op": "delivery.ack", "deliveryId": e.ID, "idempotencyKey": "ack:" + e.ID})
-	return err
+func (e Event) Ack(ctx context.Context) (AckResult, error) {
+	return requestAs[AckResult](e.client, ctx, map[string]any{"op": "delivery.ack", "deliveryId": e.ID, "idempotencyKey": "ack:" + e.ID})
 }
-func (c *Client) Set(ctx context.Context, s Schedule) error {
-	_, err := c.request(ctx, map[string]any{"op": "schedule.set", "key": s.Key, "event": s.Event, "after": s.After, "at": s.At, "data": s.Data, "chain": s.Chain, "idempotencyKey": s.IdempotencyKey})
-	return err
+func (c *Client) Set(ctx context.Context, s Schedule) (ScheduleResult, error) {
+	return requestAs[ScheduleResult](c, ctx, map[string]any{"op": "schedule.set", "key": s.Key, "event": s.Event, "after": s.After, "at": s.At, "data": s.Data, "chain": s.Chain, "idempotencyKey": s.IdempotencyKey})
 }
-func (c *Client) Cancel(ctx context.Context, key, idempotencyKey string) error {
-	_, err := c.request(ctx, map[string]any{"op": "schedule.cancel", "key": key, "idempotencyKey": idempotencyKey})
-	return err
+func (c *Client) Throttle(ctx context.Context, t Throttle) (ThrottleResult, error) {
+	return requestAs[ThrottleResult](c, ctx, map[string]any{"op": "schedule.throttle", "key": t.Key, "event": t.Event, "cooldown": t.Cooldown, "data": t.Data, "chain": t.Chain, "idempotencyKey": t.IdempotencyKey})
 }
-func (c *Client) Extend(ctx context.Context, key, by, idempotencyKey string) error {
-	_, err := c.request(ctx, map[string]any{"op": "schedule.extend", "key": key, "by": by, "idempotencyKey": idempotencyKey})
-	return err
+func (c *Client) Cancel(ctx context.Context, key, idempotencyKey string) (CancelResult, error) {
+	return requestAs[CancelResult](c, ctx, map[string]any{"op": "schedule.cancel", "key": key, "idempotencyKey": idempotencyKey})
 }
-func (c *Client) Start(ctx context.Context, name, idempotencyKey string, data any) error {
-	_, err := c.request(ctx, map[string]any{"op": "workflow.start", "name": name, "data": data, "idempotencyKey": idempotencyKey})
-	return err
+func (c *Client) Extend(ctx context.Context, key, by, idempotencyKey string) (DeadlineResult, error) {
+	return requestAs[DeadlineResult](c, ctx, map[string]any{"op": "schedule.extend", "key": key, "by": by, "idempotencyKey": idempotencyKey})
 }
-func (c *Client) Signal(ctx context.Context, event, correlationKey, idempotencyKey string, data any) error {
-	_, err := c.request(ctx, map[string]any{"op": "signal", "event": event, "correlationKey": correlationKey, "data": data, "idempotencyKey": idempotencyKey})
-	return err
+func (c *Client) Start(ctx context.Context, name, idempotencyKey string, data any) (WorkflowResult, error) {
+	return requestAs[WorkflowResult](c, ctx, map[string]any{"op": "workflow.start", "name": name, "data": data, "idempotencyKey": idempotencyKey})
+}
+func (c *Client) Signal(ctx context.Context, event, correlationKey, idempotencyKey string, data any) (SignalResult, error) {
+	return requestAs[SignalResult](c, ctx, map[string]any{"op": "signal", "event": event, "correlationKey": correlationKey, "data": data, "idempotencyKey": idempotencyKey})
+}
+func requestAs[T any](c *Client, ctx context.Context, v map[string]any) (T, error) {
+	var out T
+	raw, err := c.request(ctx, v)
+	if err != nil {
+		return out, err
+	}
+	if err = json.Unmarshal(raw, &out); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 func (c *Client) request(ctx context.Context, v map[string]any) (json.RawMessage, error) {
 	id := itoa(atomic.AddUint64(&c.n, 1))

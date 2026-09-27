@@ -1,7 +1,24 @@
 {
   "name": "@calcron/node",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Node.js and TypeScript client for Calcron",
   "type": "module",
-  "scripts": { "test": "node --experimental-strip-types --test index.test.ts" },
-  "devDependencies": { "ws": "^8.18.0" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run typecheck && node --experimental-strip-types --test index.test.ts && echo 'node sdk verification passed'",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
 }
