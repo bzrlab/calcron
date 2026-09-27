@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { AdminClient, AuthRejected, wsURL, type ConnState, type Reply } from "../lib/protocol";
+import { AdminClient, AuthRejected, wsURL, type AdminCommand, type CommandResult, type ConnState, type Reply } from "../lib/protocol";
 
 type Ctx = {
   state: ConnState;
@@ -16,7 +16,7 @@ type Ctx = {
   session: boolean;
   connect: (token: string) => Promise<void>;
   disconnect: () => void;
-  send: (body: Record<string, unknown> & { op: string }) => Promise<Reply>;
+  send: <C extends AdminCommand>(body: C) => Promise<Reply<CommandResult<C>>>;
   error: string | null;
 };
 
@@ -78,17 +78,17 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(t);
   }, [session, state, connect]);
 
-  const send = useCallback(async (body: Record<string, unknown> & { op: string }) => {
+  const send = useCallback(async <C extends AdminCommand>(body: C): Promise<Reply<CommandResult<C>>> => {
     const c = clientRef.current;
-    if (!c) return { ok: false, error: "not connected" } satisfies Reply;
+    if (!c) return { ok: false, error: "not connected" };
     try {
       const r = await c.request(body);
       setError(r.ok ? null : (r.error ?? "request failed"));
-      return r;
+      return r as Reply<CommandResult<C>>;
     } catch (e) {
       const error = e instanceof Error ? e.message : "request failed";
       setError(error);
-      return { ok: false, error } satisfies Reply;
+      return { ok: false, error };
     }
   }, []);
 

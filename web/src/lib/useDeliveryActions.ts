@@ -12,8 +12,12 @@ export function useDeliveryActions(after: () => void) {
 
   async function replay(d: DeliveryRef) {
     const r = await send({ op: "delivery.replay", deliveryId: d.id });
-    const done = r.ok && (r.data as { replayed?: boolean })?.replayed;
-    notify(done ? `Replayed ${d.event} to ${appName(d.application_id)}` : r.error ?? `Not replayed: delivery is ${d.status}`, !!done);
+    if (!r.ok) {
+      notify(r.error, false);
+      after();
+      return;
+    }
+    notify(r.data.replayed ? `Replayed ${d.event} to ${appName(d.application_id)}` : `Not replayed: delivery is ${d.status}`, r.data.replayed);
     after();
   }
 
@@ -25,8 +29,12 @@ export function useDeliveryActions(after: () => void) {
     });
     if (!yes) return;
     const r = await send({ op: "delivery.cancel", deliveryId: d.id });
-    const done = r.ok && (r.data as { cancelled?: boolean })?.cancelled;
-    notify(done ? `Cancelled ${d.event}` : r.error ?? `Not cancelled: delivery is ${d.status}`, !!done);
+    if (!r.ok) {
+      notify(r.error, false);
+      after();
+      return;
+    }
+    notify(r.data.cancelled ? `Cancelled ${d.event}` : `Not cancelled: delivery is ${d.status}`, r.data.cancelled);
     after();
   }
 

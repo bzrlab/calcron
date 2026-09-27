@@ -37,7 +37,7 @@ export function useStartOccurrences<S extends Start>(starts: S[], shown: Date[],
           until: to.toISOString(),
           ...(draft ? { data: draft } : { calendar: s.calendar_name }),
         });
-        return r.ok ? (r.data as { occurrences: string[] }).occurrences.map((x) => ({ s, at: new Date(x) })) : [];
+        return r.ok ? r.data.occurrences.map((x) => ({ s, at: new Date(x) })) : [];
       }),
     ).then((all) => !cancelled && setOut(all.flat()));
     return () => { cancelled = true; };

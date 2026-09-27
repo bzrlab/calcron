@@ -1,13 +1,30 @@
-// Calcron admin protocol client. Mirrors internal/server frame + reply shapes
-// (see .cursor/rules/protocol-and-sdk.mdc). Admin connects with the admin token,
-// sends one frame per op, correlates replies by id.
+// Calcron's operator command catalog. This is the dashboard's protocol seam:
+// views name an intention and receive its declared result, while AdminClient
+// owns framing, correlation, authentication, and transport failures.
+export type DashboardListName = "apps" | "schedules" | "deliveries" | "workflows" | "history" | "calendars" | "tokens" | "start_schedules" | "workflow_versions";
+type DashboardListRequest = { name: DashboardListName; subjectType?: string; subjectId?: string; before?: number };
 
-export type Reply = {
-  id?: string;
-  ok: boolean;
-  data?: unknown;
-  error?: string;
+type CommandMap = {
+  "app.create": { request: { name: string; namespace: string }; result: { applicationId: string; token: string } };
+  "app.token.rotate": { request: { applicationId: string }; result: { tokenId: string; token: string } };
+  "app.token.revoke": { request: { tokenId: string }; result: { revoked: boolean } };
+  "workflow.publish": { request: { applicationId: string; name: string; data: unknown }; result: { version: number } };
+  "calendar.set": { request: { applicationId: string; name: string; data: unknown }; result: unknown };
+  "calendar.next": { request: { applicationId?: string; calendar?: string; data?: unknown; at: string }; result: { next: string } };
+  "calendar.occurrences": { request: { applicationId?: string; calendar?: string; data?: unknown; localTime: string; at: string; until: string }; result: { occurrences: string[] } };
+  "start-schedule.set": { request: { applicationId: string; name: string; workflow: string; calendar: string; localTime: string; missedPolicy: string; data?: unknown }; result: unknown };
+  "dashboard.stats": { request: Record<never, never>; result: unknown };
+  "dashboard.list": { request: DashboardListRequest; result: unknown[] };
+  "delivery.replay": { request: { deliveryId: string }; result: { replayed: boolean } };
+  "delivery.cancel": { request: { deliveryId: string }; result: { cancelled: boolean } };
 };
+
+export type AdminCommand = { [Op in keyof CommandMap]: { op: Op } & CommandMap[Op]["request"] }[keyof CommandMap];
+export type CommandResult<C extends AdminCommand> = C extends { op: infer Op extends keyof CommandMap } ? CommandMap[Op]["result"] : never;
+export type Reply<T = unknown> =
+  | { id?: string; ok: true; data: T }
+  | { id?: string; ok: false; error: string };
+type AuthCommand = { op: "auth"; token: string };
 
 export type DeliveryPush = {
   op: "delivery";
@@ -80,12 +97,12 @@ export class AdminClient {
   // request sends one admin frame and resolves with the reply. `data` carries the
   // op payload (definition, calendar, etc.); `idempotencyKey` is not required for
   // admin ops but is forwarded when present.
-  request(
-    body: Record<string, unknown> & { op: string },
+  request<C extends AdminCommand | AuthCommand>(
+    body: C,
     timeoutMs = 10_000,
-  ): Promise<Reply> {
+  ): Promise<Reply<C extends AdminCommand ? CommandResult<C> : { application: string; admin: boolean }>> {
     const id = String(++this.n);
-    return new Promise<Reply>((resolve, reject) => {
+    return new Promise<Reply<C extends AdminCommand ? CommandResult<C> : { application: string; admin: boolean }>>((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error("Calcron disconnected"));
         return;
@@ -97,7 +114,7 @@ export class AdminClient {
       this.pending.set(id, {
         resolve: (r) => {
           clearTimeout(timer);
-          resolve(r);
+          resolve(r as Reply<C extends AdminCommand ? CommandResult<C> : { application: string; admin: boolean }>);
         },
         reject: (e) => {
           clearTimeout(timer);

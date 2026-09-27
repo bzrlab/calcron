@@ -56,7 +56,7 @@ export function Apps() {
         notify(r.error ?? "app.create failed", false);
         return;
       }
-      setCreated(r.data as { applicationId: string; token: string });
+      setCreated(r.data);
       setShowCreate(false);
       setName("");
       setNamespace("");
@@ -74,7 +74,7 @@ export function Apps() {
         notify(r.error ?? "rotation failed", false);
         return;
       }
-      setRotated(r.data as { tokenId: string; token: string });
+      setRotated(r.data);
       void reloadTokens();
     } finally {
       setBusy(false);
@@ -89,8 +89,12 @@ export function Apps() {
     });
     if (!yes) return;
     const r = await send({ op: "app.token.revoke", tokenId: t.id });
-    const done = r.ok && (r.data as { revoked?: boolean })?.revoked;
-    notify(done ? "Token revoked" : r.error ?? "Token was already revoked", !!done);
+    if (!r.ok) {
+      notify(r.error, false);
+      void reloadTokens();
+      return;
+    }
+    notify(r.data.revoked ? "Token revoked" : "Token was already revoked", r.data.revoked);
     void reloadTokens();
   }
 

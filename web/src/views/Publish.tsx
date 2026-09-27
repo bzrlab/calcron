@@ -77,7 +77,7 @@ function WorkflowForm({ appId }: { appId: string }) {
         setServerError(r.error ?? "workflow.publish failed");
         return;
       }
-      const version = (r.data as { version: number }).version;
+      const version = r.data.version;
       notify(`Published ${name} v${version} for ${appName(appId)}`);
       bump();
       go("workflows");
