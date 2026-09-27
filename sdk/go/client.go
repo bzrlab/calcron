@@ -73,7 +73,10 @@ func OnTyped[T any](c *Client, event EventType[T], handler func(TypedDelivery[T]
 	})
 }
 
-// TypedChain creates a successor that uses the same typed event payload.
+// ChainValue converts a typed successor into the wire representation.
+type ChainValue interface{ chain() *Chain }
+
+// TypedChain creates a typed successor schedule.
 type TypedChain[T any] struct {
 	Key   string
 	Event EventType[T]
@@ -81,19 +84,23 @@ type TypedChain[T any] struct {
 	Data  T
 }
 
+func (c TypedChain[T]) chain() *Chain {
+	return &Chain{Key: c.Key, Event: c.Event.name, After: c.After, Data: c.Data}
+}
+
 // TypedSchedule pairs a schedule event with the matching payload type.
 type TypedSchedule[T any] struct {
 	Key, After, At, IdempotencyKey string
 	Event                          EventType[T]
 	Data                           T
-	Chain                          *TypedChain[T]
+	Chain                          ChainValue
 }
 
 // SetTyped creates or replaces a schedule with a payload tied to its event.
 func SetTyped[T any](ctx context.Context, c *Client, s TypedSchedule[T]) (ScheduleResult, error) {
 	var chain *Chain
 	if s.Chain != nil {
-		chain = &Chain{Key: s.Chain.Key, Event: s.Chain.Event.name, After: s.Chain.After, Data: s.Chain.Data}
+		chain = s.Chain.chain()
 	}
 	return c.Set(ctx, Schedule{Key: s.Key, Event: s.Event.name, After: s.After, At: s.At, Data: s.Data, Chain: chain, IdempotencyKey: s.IdempotencyKey})
 }
@@ -103,14 +110,14 @@ type TypedThrottle[T any] struct {
 	Key, Cooldown, IdempotencyKey string
 	Event                         EventType[T]
 	Data                          T
-	Chain                         *TypedChain[T]
+	Chain                         ChainValue
 }
 
 // ThrottleTyped triggers a typed leading-edge throttle.
 func ThrottleTyped[T any](ctx context.Context, c *Client, t TypedThrottle[T]) (ThrottleResult, error) {
 	var chain *Chain
 	if t.Chain != nil {
-		chain = &Chain{Key: t.Chain.Key, Event: t.Chain.Event.name, After: t.Chain.After, Data: t.Chain.Data}
+		chain = t.Chain.chain()
 	}
 	return c.Throttle(ctx, Throttle{Key: t.Key, Event: t.Event.name, Cooldown: t.Cooldown, Data: t.Data, Chain: chain, IdempotencyKey: t.IdempotencyKey})
 }

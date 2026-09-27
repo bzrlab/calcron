@@ -65,7 +65,9 @@ await calcron.start("invoice-lifecycle", "invoice:42:start:v1", { invoiceId: "42
 Go binds each event-name value to its payload through generics. Declare the
 value once, then use `OnTyped`, `SetTyped`, `ThrottleTyped`, and `SignalTyped`;
 the compiler infers the payload from that value and `TypedDelivery` is already
-decoded. `EventOf` is the Go equivalent of the TypeScript event map.
+decoded. `EventOf` is the Go equivalent of the TypeScript event map. A
+`TypedChain` may use a different `EventOf` declaration from its parent, so its
+successor event and payload remain paired too.
 
 ```go
 type InvoiceDue struct { InvoiceID string `json:"invoiceId"`; Amount int `json:"amount"` }
@@ -121,7 +123,7 @@ calcron.on("invoice.due", async delivery => {
 await calcron.connect();
 const schedule = await calcron.set({
   key: "invoice:42", event: "invoice.due", after: "24h", data: { invoiceId: 42 },
-  chain: { key: "invoice:42:overdue", event: "invoice.overdue", after: "24h" },
+  chain: { key: "invoice:42:overdue", event: "invoice.overdue", after: "24h", data: { invoiceId: 42 } },
   idempotencyKey: "invoice:42:due:v1",
 });
 const first = await calcron.throttle({ key: "invoice:42:notice", event: "invoice.notice", cooldown: "5m", idempotencyKey: "invoice:42:notice:v1" });

@@ -6,12 +6,13 @@ export type EventName<Events extends object> = Extract<keyof Events, string>;
 export type WorkflowName<Workflows extends object> = Extract<keyof Workflows, string>;
 type PayloadField<Payload> = unknown extends Payload ? { data?: Payload } : undefined extends Payload ? { data?: Payload } : { data: Payload };
 type PayloadArgument<Payload> = unknown extends Payload ? [data?: Payload] : undefined extends Payload ? [data?: Payload] : [data: Payload];
+type AnyChain<Events extends object> = { [Name in EventName<Events>]: Chain<Events, Name> }[EventName<Events>];
 
 /** A schedule created or replaced by `set`. Durations use Go duration syntax. */
 type ScheduleBase<Events extends object, Name extends EventName<Events>> = {
   key: string;
   event: Name;
-  chain?: Chain<Events>;
+  chain?: AnyChain<Events>;
   idempotencyKey: string;
 } & PayloadField<Events[Name]>;
 export type Schedule<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = ScheduleBase<Events, Name> & ({ after: string; at?: never } | { at: string; after?: never });

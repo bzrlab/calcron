@@ -18,6 +18,13 @@ type invoiceDueData struct {
 
 var invoiceDue = EventOf[invoiceDueData]("invoice.due")
 
+type invoiceOverdueData struct {
+	InvoiceID int    `json:"invoiceId"`
+	Reason    string `json:"reason"`
+}
+
+var invoiceOverdue = EventOf[invoiceOverdueData]("invoice.overdue")
+
 func TestClientReconnects(t *testing.T) {
 	var connections atomic.Int32
 	reconnected := make(chan struct{}, 1)
@@ -114,6 +121,16 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"scheduleId":"invalid","runAt":"2026-09-28T10:00:00Z"}}`))
 					continue
 				}
+				if frame["key"] == "invoice:43" {
+					chain, valid := frame["chain"].(map[string]any)
+					data, hasData := chain["data"].(map[string]any)
+					if !valid || chain["key"] != "invoice:43:overdue" || chain["event"] != "invoice.overdue" || !hasData || data["reason"] != "unpaid" {
+						_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":false,"error":"invalid typed chain"}`))
+						continue
+					}
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"scheduleId":"s-1","runAt":"2026-09-28T10:00:00Z"}}`))
+					continue
+				}
 				chain, valid := frame["chain"].(map[string]any)
 				if !valid || chain["key"] != "invoice:42:overdue" || chain["after"] != "24h" {
 					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":false,"error":"invalid chain"}`))
@@ -162,7 +179,7 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 	if err != nil || set.ScheduleID != "s-1" {
 		t.Fatalf("set = %#v, %v", set, err)
 	}
-	typed, err := SetTyped(ctx, c, TypedSchedule[invoiceDueData]{Key: "invoice:43", Event: invoiceDue, After: "1h", Data: invoiceDueData{InvoiceID: 43}, Chain: &TypedChain[invoiceDueData]{Key: "invoice:42:overdue", Event: invoiceDue, After: "24h"}, IdempotencyKey: "set:invoice:43:v1"})
+	typed, err := SetTyped(ctx, c, TypedSchedule[invoiceDueData]{Key: "invoice:43", Event: invoiceDue, After: "1h", Data: invoiceDueData{InvoiceID: 43}, Chain: TypedChain[invoiceOverdueData]{Key: "invoice:43:overdue", Event: invoiceOverdue, After: "24h", Data: invoiceOverdueData{InvoiceID: 43, Reason: "unpaid"}}, IdempotencyKey: "set:invoice:43:v1"})
 	if err != nil || typed.ScheduleID != "s-1" {
 		t.Fatalf("typed set = %#v, %v", typed, err)
 	}

@@ -13,8 +13,8 @@
   "files": ["dist", "README.md"],
   "engines": { "node": ">=22" },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "npm run typecheck && node --experimental-strip-types --test index.test.ts && echo 'node sdk verification passed'",
     "prepack": "npm run build"
   },

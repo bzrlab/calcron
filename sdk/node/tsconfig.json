@@ -10,5 +10,5 @@
     "rootDir": ".",
     "skipLibCheck": true
   },
-  "include": ["index.ts", "typecheck.test.ts"]
+  "include": ["index.ts"]
 }
