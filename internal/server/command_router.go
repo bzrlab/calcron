@@ -46,6 +46,8 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 			return s.setCalendar(ctx, f)
 		case "calendar.next":
 			return s.nextCalendar(ctx, f)
+		case "calendar.occurrences":
+			return s.calendarOccurrences(ctx, f)
 		case "start-schedule.set":
 			return s.setStartSchedule(ctx, f)
 		case "dashboard.stats":

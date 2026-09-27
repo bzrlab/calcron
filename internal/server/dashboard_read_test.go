@@ -131,7 +131,7 @@ func TestDashboardListsStartSchedulesAndLatestWorkflowVersions(t *testing.T) {
 	if got := read(t, ctx, admin); got["ok"] != true {
 		t.Fatalf("calendar.set: %#v", got)
 	}
-	write(t, ctx, admin, map[string]any{"op": "start-schedule.set", "applicationId": appID, "name": "morning", "workflow": "settle", "calendar": "weekdays", "localTime": "09:30", "missedPolicy": "run_once_late"})
+	write(t, ctx, admin, map[string]any{"op": "start-schedule.set", "applicationId": appID, "name": "morning", "workflow": "settle", "calendar": "weekdays", "localTime": "09:30", "missedPolicy": "run_once_late", "data": map[string]any{"region": "north"}})
 	if got := read(t, ctx, admin); got["ok"] != true {
 		t.Fatalf("start-schedule.set: %#v", got)
 	}
@@ -143,6 +143,9 @@ func TestDashboardListsStartSchedulesAndLatestWorkflowVersions(t *testing.T) {
 	if start["name"] != "morning" || start["workflow_name"] != "settle" || start["calendar_name"] != "weekdays" ||
 		start["local_time"] != "09:30" || start["missed_policy"] != "run_once_late" || start["next_at"] == nil {
 		t.Fatalf("start schedule row: %#v", start)
+	}
+	if input, _ := start["input"].(map[string]any); input["region"] != "north" {
+		t.Fatalf("start schedule row hides input, so an edit would wipe it: %#v", start)
 	}
 }
 

@@ -343,15 +343,8 @@ func (s *Server) setCalendar(ctx context.Context, f frame) reply {
 	if f.ApplicationID == "" || f.Name == "" {
 		return fail("applicationId and name required")
 	}
-	var d calendarDefinition
-	if json.Unmarshal(f.Data, &d) != nil || d.Timezone == "" {
-		return fail("invalid calendar")
-	}
-	if _, e := time.LoadLocation(d.Timezone); e != nil {
-		return fail("invalid timezone")
-	}
-	if len(d.Weekdays) == 0 {
-		return fail("calendar needs weekdays")
+	if _, e := parseCalendar(f.Data); e != nil {
+		return fail(e.Error())
 	}
 	_, e := s.db.Exec(ctx, `insert into calendars(application_id,name,definition) values($1,$2,$3) on conflict(application_id,name) do update set definition=excluded.definition,updated_at=now()`, f.ApplicationID, f.Name, f.Data)
 	if e != nil {
@@ -359,6 +352,90 @@ func (s *Server) setCalendar(ctx context.Context, f frame) reply {
 	}
 	return ok(nil)
 }
+func parseCalendar(raw []byte) (calendarDefinition, error) {
+	var d calendarDefinition
+	if json.Unmarshal(raw, &d) != nil || d.Timezone == "" {
+		return d, errors.New("invalid calendar")
+	}
+	if _, e := time.LoadLocation(d.Timezone); e != nil {
+		return d, errors.New("invalid timezone")
+	}
+	if len(d.Weekdays) == 0 {
+		return d, errors.New("calendar needs weekdays")
+	}
+	return d, nil
+}
+
+func (s *Server) loadCalendar(ctx context.Context, app, name string) (calendarDefinition, error) {
+	var raw []byte
+	var d calendarDefinition
+	if s.db.QueryRow(ctx, `select definition from calendars where application_id=$1 and name=$2`, app, name).Scan(&raw) != nil {
+		return d, errors.New("calendar not found")
+	}
+	return d, json.Unmarshal(raw, &d)
+}
+
+// calendarOccurrences lists every eligible run in [at, until) for a stored calendar,
+// or for an inline definition so editors can preview unsaved changes.
+// A localTime that falls in a DST gap skips that date, as the Start schedule scheduler does.
+func (s *Server) calendarOccurrences(ctx context.Context, f frame) reply {
+	if f.LocalTime == "" || f.At == "" || f.Until == "" {
+		return fail("localTime, at and until required")
+	}
+	var d calendarDefinition
+	var e error
+	switch {
+	case f.Calendar != "" && f.ApplicationID == "":
+		return fail("applicationId required with calendar")
+	case f.Calendar != "":
+		d, e = s.loadCalendar(ctx, f.ApplicationID, f.Calendar)
+	case len(f.Data) > 0:
+		d, e = parseCalendar(f.Data)
+	default:
+		return fail("calendar or data required")
+	}
+	if e != nil {
+		return fail(e.Error())
+	}
+	loc, _ := time.LoadLocation(d.Timezone)
+	from, e1 := time.Parse(time.RFC3339, f.At)
+	until, e2 := time.Parse(time.RFC3339, f.Until)
+	if e1 != nil || e2 != nil {
+		return fail("invalid at or until")
+	}
+	if !until.After(from) || until.Sub(from) > 366*24*time.Hour {
+		return fail("until must be after at and within 366 days")
+	}
+	out := []string{}
+	for from = from.Add(-time.Nanosecond); ; {
+		next, e := nextCalendar(d, from, f.LocalTime)
+		if errors.Is(e, errLocalTimeGap) {
+			l := from.In(loc)
+			if from = time.Date(l.Year(), l.Month(), l.Day()+1, 0, 0, 0, 0, loc); !from.Before(until) {
+				break
+			}
+			continue
+		}
+		if errors.Is(e, errNoEligibleDate) {
+			break
+		}
+		if e != nil {
+			return fail(e.Error())
+		}
+		if !next.Before(until) {
+			break
+		}
+		out = append(out, next.Format(time.RFC3339))
+		from = next
+	}
+	return ok(map[string]any{"occurrences": out})
+}
+
+var (
+	errLocalTimeGap   = errors.New("localTime does not exist on calendar date")
+	errNoEligibleDate = errors.New("no eligible calendar date")
+)
+
 func nextCalendar(d calendarDefinition, from time.Time, clock string) (time.Time, error) {
 	loc, e := time.LoadLocation(d.Timezone)
 	if e != nil {
@@ -390,24 +467,20 @@ func nextCalendar(d calendarDefinition, from time.Time, clock string) (time.Time
 		}
 		at := time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, loc)
 		if yes && (at.Year() != day.Year() || at.Month() != day.Month() || at.Day() != day.Day() || at.Hour() != h || at.Minute() != m) {
-			return time.Time{}, errors.New("localTime does not exist on calendar date")
+			return time.Time{}, errLocalTimeGap
 		}
 		if yes && at.After(from) {
 			return at.UTC(), nil
 		}
 	}
-	return time.Time{}, errors.New("no eligible calendar date")
+	return time.Time{}, errNoEligibleDate
 }
 func (s *Server) nextCalendar(ctx context.Context, f frame) reply {
 	if f.ApplicationID == "" || f.Calendar == "" || f.LocalTime == "" {
 		return fail("applicationId, calendar and localTime required")
 	}
-	var raw []byte
-	if e := s.db.QueryRow(ctx, `select definition from calendars where application_id=$1 and name=$2`, f.ApplicationID, f.Calendar).Scan(&raw); e != nil {
-		return fail("calendar not found")
-	}
-	var d calendarDefinition
-	if e := json.Unmarshal(raw, &d); e != nil {
+	d, e := s.loadCalendar(ctx, f.ApplicationID, f.Calendar)
+	if e != nil {
 		return fail(e.Error())
 	}
 	from := time.Now().UTC()
@@ -431,12 +504,10 @@ func (s *Server) setStartSchedule(ctx context.Context, f frame) reply {
 	if f.MissedPolicy != "skip" && f.MissedPolicy != "run_once_late" && f.MissedPolicy != "catch_up" {
 		return fail("invalid missedPolicy")
 	}
-	var raw []byte
-	if e := s.db.QueryRow(ctx, `select definition from calendars where application_id=$1 and name=$2`, f.ApplicationID, f.Calendar).Scan(&raw); e != nil {
-		return fail("calendar not found")
+	d, e := s.loadCalendar(ctx, f.ApplicationID, f.Calendar)
+	if e != nil {
+		return fail(e.Error())
 	}
-	var d calendarDefinition
-	_ = json.Unmarshal(raw, &d)
 	next, e := nextCalendar(d, time.Now().UTC(), f.LocalTime)
 	if e != nil {
 		return fail(e.Error())
@@ -474,12 +545,10 @@ func (s *Server) startRecurring(ctx context.Context) {
 		if rows.Scan(&id, &app, &wf, &cal, &clock, &policy, &data, &due) != nil {
 			continue
 		}
-		var raw []byte
-		if s.db.QueryRow(ctx, `select definition from calendars where application_id=$1 and name=$2`, app, cal).Scan(&raw) != nil {
+		d, e := s.loadCalendar(ctx, app, cal)
+		if e != nil {
 			continue
 		}
-		var d calendarDefinition
-		_ = json.Unmarshal(raw, &d)
 		from := time.Now().UTC()
 		if policy == "catch_up" {
 			from = due.Add(time.Second)

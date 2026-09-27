@@ -46,3 +46,7 @@
 
 html, body, #root { height: 100%; }
 body { margin: 0; }
+
+/* DaisyUI 5 dropped these; views still use them for stacked labels. */
+.form-control { display: flex; flex-direction: column; }
+.label-text { font-size: 0.875rem; color: color-mix(in oklab, var(--color-base-content) 80%, transparent); }

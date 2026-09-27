@@ -121,28 +121,51 @@ function WorkflowForm({ appId }: { appId: string }) {
   );
 }
 
-function StartScheduleForm({ appId }: { appId: string }) {
+export type StartSchedule = {
+  id: string;
+  application_id: string;
+  name: string;
+  workflow_name: string;
+  calendar_name: string;
+  local_time: string;
+  missed_policy: string;
+  input: unknown;
+  next_at: string;
+  updated_at: string;
+};
+
+export function StartScheduleForm({ appId, initial, onSaved }: { appId: string; initial?: StartSchedule; onSaved?: () => void }) {
   const { send } = useAdmin();
   const { notify, appName, go, bump } = useShell();
   const { rows: versions } = useList<Version>("workflow_versions");
   const { rows: calendars } = useList<Calendar>("calendars");
   const workflows = versions.filter((v) => v.application_id === appId);
   const appCalendars = calendars.filter((c) => c.application_id === appId);
-  const [name, setName] = useState("");
-  const [workflow, setWorkflow] = useState("");
-  const [calendar, setCalendar] = useState("");
-  const [localTime, setLocalTime] = useState("09:00");
-  const [policy, setPolicy] = useState("skip");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [workflow, setWorkflow] = useState(initial?.workflow_name ?? "");
+  const [calendar, setCalendar] = useState(initial?.calendar_name ?? "");
+  const [localTime, setLocalTime] = useState(initial?.local_time ?? "09:00");
+  const [policy, setPolicy] = useState(initial?.missed_policy ?? "skip");
   const [busy, setBusy] = useState(false);
 
   async function save() {
     setBusy(true);
     try {
-      const r = await send({ op: "start-schedule.set", applicationId: appId, name, workflow, calendar, localTime, missedPolicy: policy });
+      const r = await send({
+        op: "start-schedule.set",
+        applicationId: appId,
+        name,
+        workflow,
+        calendar,
+        localTime,
+        missedPolicy: policy,
+        ...(initial ? { data: initial.input } : {}),
+      });
       notify(r.ok ? `Start schedule ${name} set for ${appName(appId)}` : r.error ?? "start-schedule.set failed", r.ok);
       if (r.ok) {
         bump();
-        go("schedules");
+        if (onSaved) onSaved();
+        else go("schedules");
       }
     } finally {
       setBusy(false);
@@ -154,7 +177,7 @@ function StartScheduleForm({ appId }: { appId: string }) {
       <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
         <label className="form-control">
           <span className="label-text mb-1">Name</span>
-          <input className="input input-bordered input-sm font-mono" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="input input-bordered input-sm font-mono" value={name} readOnly={!!initial} onChange={(e) => setName(e.target.value)} />
         </label>
         <label className="form-control">
           <span className="label-text mb-1">Workflow definition</span>
@@ -184,7 +207,7 @@ function StartScheduleForm({ appId }: { appId: string }) {
         </label>
       </div>
       <button className="btn btn-primary" disabled={busy || !appId || !name || !workflow || !calendar} onClick={() => void save()}>
-        {busy && <span className="loading loading-spinner loading-sm" />}Set start schedule
+        {busy && <span className="loading loading-spinner loading-sm" />}{initial ? "Save start schedule" : "Set start schedule"}
       </button>
     </div>
   );

@@ -17,9 +17,9 @@ function inFuture(s: number): string {
   return `in ${Math.round(s / 86400)}d`;
 }
 
-export function fmt(iso?: string | null): string {
+export function fmt(iso?: string | null, timeZone?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return String(iso);
-  return d.toLocaleString();
+  return d.toLocaleString(undefined, timeZone ? { timeZone, timeZoneName: "short" } : undefined);
 }

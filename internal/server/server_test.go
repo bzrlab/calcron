@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"reflect"
@@ -316,6 +317,55 @@ func TestCalendarNextHonorsOverridesAndDST(t *testing.T) {
 	write(t, ctx, admin, map[string]any{"op": "calendar.next", "applicationId": appID, "calendar": "dst", "localTime": "02:30", "at": "2025-03-08T00:00:00Z"})
 	if got := read(t, ctx, admin); got["error"] != "localTime does not exist on calendar date" {
 		t.Fatalf("DST gap accepted: %#v", got)
+	}
+}
+
+func TestCalendarOccurrences(t *testing.T) {
+	ctx, _, admin := testServer(t, 0)
+	appID, _ := newApp(t, ctx, admin, "occurrences")
+	write(t, ctx, admin, map[string]any{"op": "calendar.set", "applicationId": appID, "name": "ny", "data": map[string]any{
+		"timezone": "America/New_York", "weekdays": []int{1}, "overrides": map[string]bool{"2025-01-04": true, "2025-01-06": false},
+	}})
+	if got := read(t, ctx, admin); got["ok"] != true {
+		t.Fatalf("calendar.set: %#v", got)
+	}
+	occurrences := func(got map[string]any) []any {
+		t.Helper()
+		if got["ok"] != true {
+			t.Fatalf("calendar.occurrences: %#v", got)
+		}
+		return got["data"].(map[string]any)["occurrences"].([]any)
+	}
+
+	write(t, ctx, admin, map[string]any{"op": "calendar.occurrences", "applicationId": appID, "calendar": "ny", "localTime": "09:00", "at": "2025-01-04T14:00:00Z", "until": "2025-01-20T14:00:00Z"})
+	if got := fmt.Sprint(occurrences(read(t, ctx, admin))); got != "[2025-01-04T14:00:00Z 2025-01-13T14:00:00Z]" {
+		t.Fatalf("named range must include at, skip the closed override, and exclude until: %s", got)
+	}
+
+	write(t, ctx, admin, map[string]any{"op": "calendar.occurrences", "localTime": "09:00", "at": "2025-01-01T00:00:00Z", "until": "2025-03-01T00:00:00Z",
+		"data": map[string]any{"timezone": "UTC", "weekdays": []int{0, 1, 2, 3, 4, 5, 6}}})
+	if got := len(occurrences(read(t, ctx, admin))); got != 59 {
+		t.Fatalf("inline daily calendar over 59 days returned %d runs", got)
+	}
+
+	write(t, ctx, admin, map[string]any{"op": "calendar.occurrences", "localTime": "02:30", "at": "2025-03-08T00:00:00Z", "until": "2025-03-11T00:00:00Z",
+		"data": map[string]any{"timezone": "America/New_York", "weekdays": []int{0, 1, 2, 3, 4, 5, 6}}})
+	if got := fmt.Sprint(occurrences(read(t, ctx, admin))); got != "[2025-03-08T07:30:00Z 2025-03-10T06:30:00Z]" {
+		t.Fatalf("spring-forward date must be skipped, not fail the range: %s", got)
+	}
+
+	for name, f := range map[string]map[string]any{
+		"range over a year": {"calendar": "ny", "applicationId": appID, "at": "2025-01-01T00:00:00Z", "until": "2026-01-03T00:00:00Z"},
+		"until before at":   {"calendar": "ny", "applicationId": appID, "at": "2025-01-02T00:00:00Z", "until": "2025-01-01T00:00:00Z"},
+		"no calendar":       {"at": "2025-01-01T00:00:00Z", "until": "2025-01-02T00:00:00Z"},
+		"named without app": {"calendar": "ny", "at": "2025-01-01T00:00:00Z", "until": "2025-01-02T00:00:00Z"},
+		"invalid inline":    {"data": map[string]any{"timezone": "Mars/Base", "weekdays": []int{1}}, "at": "2025-01-01T00:00:00Z", "until": "2025-01-02T00:00:00Z"},
+	} {
+		f["op"], f["localTime"] = "calendar.occurrences", "09:00"
+		write(t, ctx, admin, f)
+		if got := read(t, ctx, admin); got["ok"] != false {
+			t.Fatalf("%s accepted: %#v", name, got)
+		}
 	}
 }
 

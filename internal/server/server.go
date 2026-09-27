@@ -51,6 +51,7 @@ type frame struct {
 	Event          string          `json:"event,omitempty"`
 	After          string          `json:"after,omitempty"`
 	At             string          `json:"at,omitempty"`
+	Until          string          `json:"until,omitempty"`
 	By             string          `json:"by,omitempty"`
 	Cooldown       string          `json:"cooldown,omitempty"`
 	Data           json.RawMessage `json:"data,omitempty"`

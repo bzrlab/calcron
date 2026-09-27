@@ -10,6 +10,7 @@ import { Schedules } from "./views/Schedules";
 import { Deliveries } from "./views/Deliveries";
 import { Workflows } from "./views/Workflows";
 import { Calendars } from "./views/Calendars";
+import { CalendarView } from "./views/CalendarView";
 import { History } from "./views/History";
 import { Publish } from "./views/Publish";
 
@@ -18,6 +19,7 @@ const GROUPS: { label: string; items: { key: string; label: string; view: () => 
     label: "Operate",
     items: [
       { key: "overview", label: "Overview", view: () => <Overview /> },
+      { key: "calendar", label: "Calendar", view: () => <CalendarView /> },
       { key: "schedules", label: "Schedules", view: () => <Schedules /> },
       { key: "workflows", label: "Workflows", view: () => <Workflows /> },
       { key: "deliveries", label: "Deliveries", view: () => <Deliveries /> },

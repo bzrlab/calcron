@@ -28,7 +28,7 @@ var dashboardQueries = map[string]string{
 	"calendars": `select application_id,name,definition,updated_at from calendars order by updated_at desc limit 100`,
 	// Never select secret_hash: token secrets are one-way (ADR 0024).
 	"tokens":            `select id,application_id,created_at,revoked_at from application_tokens order by created_at desc limit 100`,
-	"start_schedules":   `select id,application_id,name,workflow_name,calendar_name,local_time,missed_policy,next_at,updated_at from start_schedules order by next_at limit 100`,
+	"start_schedules":   `select id,application_id,name,workflow_name,calendar_name,local_time,missed_policy,input,next_at,updated_at from start_schedules order by next_at limit 100`,
 	"workflow_versions": `select distinct on (application_id,name) application_id,name,version,created_at from workflow_versions order by application_id,name,version desc limit 100`,
 }
 

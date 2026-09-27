@@ -14,7 +14,7 @@ WebSocket-only application protocol (ADR-0001). Node/TS and Go SDKs first (ADR-0
 - Auth is the first frame: `{"op":"auth","token":"..."}`. Credentials in the frame, never the URL.
 - Every state-changing app op carries an `idempotencyKey`; repeating it returns the original result without re-applying.
 - App ops: `schedule.set`, `schedule.cancel`, `schedule.extend`, `schedule.throttle`, `delivery.ack`, `workflow.start`, `signal`.
-- Admin ops: `app.create`, `app.token.rotate`, `app.token.revoke`, `workflow.publish`, `calendar.set`, `calendar.next`, `start-schedule.set`, `dashboard.stats`, `dashboard.list`, `delivery.replay`, `delivery.cancel`.
+- Admin ops: `app.create`, `app.token.rotate`, `app.token.revoke`, `workflow.publish`, `calendar.set`, `calendar.next`, `calendar.occurrences`, `start-schedule.set`, `dashboard.stats`, `dashboard.list`, `delivery.replay`, `delivery.cancel`.
 - Delivery push: `{ op:"delivery", deliveryId, scheduleId, event, data }`.
 
 ## SDK responsibilities (own these, don't leak to callers)

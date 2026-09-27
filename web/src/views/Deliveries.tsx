@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useAdmin } from "../lib/admin";
 import { useList } from "../lib/useList";
+import { canCancel, canReplay, useDeliveryActions } from "../lib/useDeliveryActions";
 import { useShell } from "../lib/shell";
 import { DataTable, type Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
@@ -26,9 +26,8 @@ type Filter = "all" | "blocked" | "pending" | "acked" | "cancelled";
 const FILTERS: Filter[] = ["blocked", "pending", "acked", "cancelled", "all"];
 
 export function Deliveries() {
-  const { send } = useAdmin();
   const { rows, loading, reload } = useList<Delivery>("deliveries");
-  const { selected, select, go, apps, notify, confirm, appName } = useShell();
+  const { selected, select, go, apps, appName } = useShell();
   const [picked, setPicked] = useState<Filter | null>(null);
 
   const counts = useMemo(() => {
@@ -40,25 +39,7 @@ export function Deliveries() {
   const visible = filter === "all" ? rows : rows.filter((d) => d.status === filter);
   const current = rows.find((d) => d.id === selected);
 
-  async function replay(d: Delivery) {
-    const r = await send({ op: "delivery.replay", deliveryId: d.id });
-    const done = r.ok && (r.data as { replayed?: boolean })?.replayed;
-    notify(done ? `Replayed ${d.event} to ${appName(d.application_id)}` : r.error ?? `Not replayed: delivery is ${d.status}`, !!done);
-    void reload();
-  }
-
-  async function cancel(d: Delivery) {
-    const yes = await confirm({
-      title: `Cancel delivery ${d.id.slice(0, 10)}…?`,
-      body: `${appName(d.application_id)} will not receive ${d.event}. Replay can restore it later.`,
-      action: "Cancel delivery",
-    });
-    if (!yes) return;
-    const r = await send({ op: "delivery.cancel", deliveryId: d.id });
-    const done = r.ok && (r.data as { cancelled?: boolean })?.cancelled;
-    notify(done ? `Cancelled ${d.event}` : r.error ?? `Not cancelled: delivery is ${d.status}`, !!done);
-    void reload();
-  }
+  const { replay, cancel } = useDeliveryActions(() => void reload());
 
   const columns: Column<Delivery>[] = [
     { key: "status", label: "Status", render: (d) => <StatusBadge value={d.status} /> },
@@ -100,10 +81,10 @@ export function Deliveries() {
       {current && (
         <Drawer title={current.event} onClose={() => select()}>
           <div className="flex gap-2">
-            <button className="btn btn-primary btn-sm" disabled={current.status !== "blocked" && current.status !== "cancelled"} onClick={() => void replay(current)}>
+            <button className="btn btn-primary btn-sm" disabled={!canReplay(current)} onClick={() => void replay(current)}>
               Replay
             </button>
-            <button className="btn btn-outline btn-error btn-sm" disabled={current.status !== "pending" && current.status !== "blocked"} onClick={() => void cancel(current)}>
+            <button className="btn btn-outline btn-error btn-sm" disabled={!canCancel(current)} onClick={() => void cancel(current)}>
               Cancel
             </button>
           </div>
