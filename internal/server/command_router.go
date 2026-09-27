@@ -33,55 +33,63 @@ func (r *commandRouter) authenticate(ctx context.Context, token string) (string,
 func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 	s := r.server
 	if p.admin {
-		switch f.Op {
-		case "app.create":
+		if err := validateAdminOperation(f.Op); err != "" {
+			return fail(err)
+		}
+		switch commandOperation(f.Op) {
+		case operationAppCreate:
 			return s.createApp(ctx, f)
-		case "app.token.rotate":
+		case operationAppTokenRotate:
 			return s.rotateToken(ctx, f)
-		case "app.token.revoke":
+		case operationAppTokenRevoke:
 			return s.revokeToken(ctx, f)
-		case "workflow.publish":
+		case operationWorkflowPublish:
 			return s.publishWorkflow(ctx, f)
-		case "calendar.set":
+		case operationCalendarSet:
 			return s.setCalendar(ctx, f)
-		case "calendar.next":
+		case operationCalendarNext:
 			return s.nextCalendar(ctx, f)
-		case "calendar.occurrences":
+		case operationCalendarOccurrences:
 			return s.calendarOccurrences(ctx, f)
-		case "start-schedule.set":
+		case operationStartScheduleSet:
 			return s.setStartSchedule(ctx, f)
-		case "dashboard.stats":
+		case operationDashboardStats:
 			return s.dashboardStats(ctx)
-		case "dashboard.list":
+		case operationDashboardList:
 			return s.dashboardReads.list(ctx, f)
-		case "delivery.replay":
+		case operationDeliveryReplay:
 			return s.replayDelivery(ctx, f)
-		case "delivery.cancel":
+		case operationDeliveryCancel:
 			return s.cancelDelivery(ctx, f)
-		default:
-			return fail("unknown admin op")
 		}
 	}
 	if f.IdempotencyKey == "" {
 		return fail("idempotencyKey required")
 	}
 	return s.serial(ctx, p.app, f.IdempotencyKey, func() reply {
-		switch f.Op {
-		case "schedule.set":
+		// Keep validation inside serialization. A retried idempotency key must
+		// return its original response before inspecting a changed operation.
+		if err := validateApplicationOperation(f.Op, f.IdempotencyKey); err != "" {
+			return fail(err)
+		}
+		switch commandOperation(f.Op) {
+		case operationScheduleSet:
 			return s.set(ctx, p.app, f)
-		case "schedule.cancel":
+		case operationScheduleCancel:
 			return s.cancel(ctx, p.app, f)
-		case "schedule.extend":
+		case operationScheduleExtend:
 			return s.extend(ctx, p.app, f)
-		case "schedule.throttle":
+		case operationScheduleThrottle:
 			return s.throttle(ctx, p.app, f)
-		case "delivery.ack":
+		case operationDeliveryAck:
 			return s.ack(ctx, p.app, f)
-		case "workflow.start":
+		case operationWorkflowStart:
 			return s.startWorkflow(ctx, p.app, f)
-		case "signal":
+		case operationSignal:
 			return s.signal(ctx, p.app, f)
 		default:
+			// validateApplicationOperation keeps this unreachable. Retaining the
+			// protocol error guards future catalog/router drift.
 			return fail("unknown op")
 		}
 	})
