@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cycleOverride, dayOpen, days, fromYmd, hhmm, shift, wallTime, ymd, zoned } from "./calendar.ts";
+import { cycleOverride, dayOpen, days, fromYmd, hhmm, moveIntent, projectMoveIntent, shift, wallTime, ymd, zoned } from "./calendar.ts";
 
 // Sep 2026 starts on a Tuesday; the month grid is 6 full weeks from the Sunday before.
 const month = days("month", new Date(2026, 8, 17));
@@ -37,6 +37,20 @@ assert.deepEqual(zoned(instant, "America/New_York"), { day: "2026-09-27", minute
 assert.equal(wallTime("2026-09-28", 2 * 60 + 30, "Asia/Dhaka").toISOString(), instant.toISOString());
 assert.equal(wallTime("2025-03-09", 12 * 60, "America/New_York").toISOString(), "2025-03-09T16:00:00.000Z", "after spring-forward is EDT");
 assert.equal(wallTime("2025-03-08", 12 * 60, "America/New_York").toISOString(), "2025-03-08T17:00:00.000Z", "before spring-forward is EST");
+
+// Grid edits are qualified by their display zone and project without leaking a Date.
+const edit = moveIntent("start:42", "2025-03-09", 9 * 60, "America/New_York");
+assert.deepEqual(edit, {
+  type: "calendar.move",
+  eventKey: "start:42",
+  display: { day: "2025-03-09", minutes: 9 * 60, timeZone: "America/New_York" },
+});
+assert.deepEqual(projectMoveIntent(edit, "Asia/Dhaka"), { day: "2025-03-09", minutes: 19 * 60, timeZone: "Asia/Dhaka" }, "projection retains the represented instant across DST zones");
+assert.equal(projectMoveIntent(edit, "America/New_York"), edit.display, "same-zone projection preserves the original wall time");
+assert.throws(() => moveIntent("", "2025-03-09", 0, "UTC"), /event key/);
+assert.throws(() => moveIntent("start:42", "2025-02-30", 0, "UTC"), /calendar day/);
+assert.throws(() => moveIntent("start:42", "2025-03-09", 24 * 60, "UTC"), /calendar minute/);
+
 assert.equal(ymd(fromYmd("2026-02-28")), "2026-02-28");
 assert.equal(hhmm(9 * 60 + 5), "09:05");
 

@@ -14,12 +14,12 @@ import { CalendarView } from "./views/CalendarView";
 import { History } from "./views/History";
 import { Publish } from "./views/Publish";
 
-const GROUPS: { label: string; items: { key: string; label: string; view: () => React.ReactNode }[] }[] = [
+const GROUPS: { label: string; items: { key: string; label: string; view: () => React.ReactNode; wide?: boolean }[] }[] = [
   {
     label: "Operate",
     items: [
       { key: "overview", label: "Overview", view: () => <Overview /> },
-      { key: "calendar", label: "Calendar", view: () => <CalendarView /> },
+      { key: "calendar", label: "Calendar", view: () => <CalendarView />, wide: true },
       { key: "schedules", label: "Schedules", view: () => <Schedules /> },
       { key: "workflows", label: "Workflows", view: () => <Workflows /> },
       { key: "deliveries", label: "Deliveries", view: () => <Deliveries /> },
@@ -29,7 +29,7 @@ const GROUPS: { label: string; items: { key: string; label: string; view: () => 
     label: "Configure",
     items: [
       { key: "apps", label: "Applications", view: () => <Apps /> },
-      { key: "calendars", label: "Calendars", view: () => <Calendars /> },
+      { key: "calendars", label: "Calendars", view: () => <Calendars />, wide: true },
       { key: "publish", label: "Publish", view: () => <Publish /> },
     ],
   },
@@ -108,7 +108,7 @@ function Shell() {
             <button className="btn btn-ghost btn-xs" onClick={bump} disabled={state !== "open"}>refresh</button>
           </div>
         </header>
-        <div className="max-w-7xl p-6">{current.view()}</div>
+        <div className={`p-6 ${current.wide ? "" : "max-w-7xl"}`}>{current.view()}</div>
       </main>
     </div>
   );

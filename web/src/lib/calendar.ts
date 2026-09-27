@@ -1,5 +1,7 @@
 export type Mode = "month" | "week" | "day";
 export type CalendarDefinition = { timezone: string; weekdays: number[]; overrides?: Record<string, boolean> };
+export type CalendarWallTime = Readonly<{ day: string; minutes: number; timeZone: string }>;
+export type CalendarMoveIntent = Readonly<{ type: "calendar.move"; eventKey: string; display: CalendarWallTime }>;
 
 export const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 export const ZONES = Intl.supportedValuesOf("timeZone");
@@ -59,6 +61,23 @@ export function wallTime(day: string, minutes: number, timeZone: string): Date {
   };
   const first = guess - offset(guess);
   return new Date(guess - offset(first));
+}
+
+// A grid edit is a wall-clock instruction in the display zone, not an unqualified instant.
+// Callers can explicitly project it into the calendar whose rule they are changing.
+export function moveIntent(eventKey: string, day: string, minutes: number, timeZone: string): CalendarMoveIntent {
+  if (!eventKey) throw new RangeError("A calendar move needs an event key");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || ymd(fromYmd(day)) !== day) throw new RangeError(`Invalid calendar day: ${day}`);
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes >= 24 * 60) throw new RangeError(`Invalid calendar minute: ${minutes}`);
+  // Constructing a formatter makes an invalid IANA zone fail at the module seam.
+  new Intl.DateTimeFormat("en-US", { timeZone });
+  return { type: "calendar.move", eventKey, display: { day, minutes, timeZone } };
+}
+
+export function projectMoveIntent(intent: CalendarMoveIntent, timeZone: string): CalendarWallTime {
+  const { display } = intent;
+  if (display.timeZone === timeZone) return display;
+  return { ...zoned(wallTime(display.day, display.minutes, display.timeZone), timeZone), timeZone };
 }
 
 export function dayOpen(def: CalendarDefinition, day: string) {

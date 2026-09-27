@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
-import { dayOpen, days, fromYmd, hhmm, shift, wallTime, ymd, zoned, type CalendarDefinition, type Mode } from "../lib/calendar";
+import { dayOpen, days, fromYmd, hhmm, moveIntent, shift, ymd, zoned, type CalendarDefinition, type CalendarMoveIntent, type Mode } from "../lib/calendar";
 
 export type Tone = "info" | "warning" | "error" | "success" | "primary" | "neutral";
 export type GridEvent = { key: string; at: Date; label: string; tone: Tone; movable?: boolean };
@@ -39,7 +39,7 @@ type Props = {
   events?: GridEvent[];
   selectedKey?: string;
   onEvent?: (key: string) => void;
-  onMove?: (key: string, at: Date) => void;
+  onMove?: (intent: CalendarMoveIntent) => void;
   definition?: CalendarDefinition | null;
   onDay?: (day: string) => void;
   onWeekday?: (weekday: number) => void;
@@ -254,7 +254,7 @@ function HourGrid({ p, shown, byDay }: { p: Props; shown: Date[]; byDay: Map<str
       if (dragging?.day !== day) return;
       ev.preventDefault();
       setHover(null);
-      p.onMove!(dragging.key, wallTime(day, slotAt(ev, dragging.grab), p.timeZone));
+      p.onMove!(moveIntent(dragging.key, day, slotAt(ev, dragging.grab), p.timeZone));
       dragging = null;
     },
   }));
@@ -282,7 +282,7 @@ function HourGrid({ p, shown, byDay }: { p: Props; shown: Date[]; byDay: Map<str
           );
         })}
       </div>
-      <div ref={scroller} className="max-h-[34rem] overflow-y-auto" style={{ scrollbarGutter: "stable" }}>
+      <div ref={scroller} className="max-h-[max(34rem,calc(100vh-20rem))] overflow-y-auto" style={{ scrollbarGutter: "stable" }}>
         <div className="relative grid" style={{ ...cols, height: HOUR * 24 }}>
           <div>
             {Array.from({ length: 24 }, (_, h) => (

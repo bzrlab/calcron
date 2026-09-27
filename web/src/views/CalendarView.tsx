@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useAdmin } from "../lib/admin";
 import { useList } from "../lib/useList";
 import { useShell } from "../lib/shell";
-import { BROWSER_ZONE, ZONES, days, hhmm, zoned, type CalendarDefinition, type Mode } from "../lib/calendar";
+import { BROWSER_ZONE, ZONES, days, hhmm, projectMoveIntent, type CalendarDefinition, type CalendarMoveIntent, type Mode } from "../lib/calendar";
 import { startEvent, useStartOccurrences } from "../lib/useStartOccurrences";
 import { canCancel, canReplay, useDeliveryActions } from "../lib/useDeliveryActions";
 import { fmt } from "../lib/format";
@@ -80,11 +80,11 @@ export function CalendarView() {
   const toggleLayer = (k: Kind) => setLayers((l) => (l.includes(k) ? l.filter((x) => x !== k) : [...l, k]));
 
   // A Start schedule runs at one local time in its Business calendar's zone, so a drop sets that time for every future run.
-  async function move(key: string, at: Date) {
-    const s = starts.find((x) => x.id === items.find((i) => i.key === key)?.id);
+  async function move(intent: CalendarMoveIntent) {
+    const s = starts.find((x) => x.id === items.find((i) => i.key === intent.eventKey)?.id);
     const zone = calendars.find((c) => c.application_id === s?.application_id && c.name === s?.calendar_name)?.definition.timezone;
     if (!s || !zone) return;
-    const localTime = hhmm(zoned(at, zone).minutes);
+    const localTime = hhmm(projectMoveIntent(intent, zone).minutes);
     if (localTime === s.local_time) return;
     const yes = await confirm({
       title: `Move ${s.name} to ${localTime}?`,
@@ -156,7 +156,7 @@ export function CalendarView() {
         events={items}
         selectedKey={selected}
         onEvent={(key) => select(key)}
-        onMove={(key, at) => void move(key, at)}
+        onMove={(intent) => void move(intent)}
         definition={shadeCalendar?.definition}
       />
 
