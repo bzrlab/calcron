@@ -100,6 +100,30 @@ test("surfaces protocol errors", async () => {
   client.close();
 });
 
+test("correlates replies that arrive out of order", async () => {
+  const { client, socket } = await connected();
+  const pending: Frame[] = [];
+  socket.respond = frame => pending.push(frame);
+  const cancel = client.cancel("invoice:42", "cancel:invoice:42:v1");
+  const extend = client.extend("invoice:42", "1h", "extend:invoice:42:v1");
+  socket.reply({ id: pending[1]?.id, ok: true, data: { runAt: "2026-09-28T11:00:00Z" } });
+  socket.reply({ id: pending[0]?.id, ok: true, data: { cancelled: true } });
+  assert.deepEqual(await cancel, { cancelled: true });
+  assert.deepEqual(await extend, { runAt: "2026-09-28T11:00:00Z" });
+  client.close();
+});
+
+test("delivers duplicate delivery IDs to an idempotent handler", async () => {
+  const { client, socket } = await connected();
+  const ids: string[] = [];
+  client.on("invoice.due", event => { ids.push(event.id); });
+  socket.reply({ op: "delivery", deliveryId: "d-1", event: "invoice.due", data: {} });
+  socket.reply({ op: "delivery", deliveryId: "d-1", event: "invoice.due", data: {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(ids, ["d-1", "d-1"]);
+  client.close();
+});
+
 test("rejects invalid credentials during connect", async () => {
   installFakeWebSocket();
   const client = new Calcron("ws://calcron.test/ws", "invalid");
@@ -124,13 +148,14 @@ test("reconnects after a transport loss", async () => {
   client.close();
 });
 
-test("keeps retrying when authentication fails during reconnect", async () => {
+test("stops and closes when authentication fails during reconnect", async () => {
   const { client, socket } = await connected();
   FakeWebSocket.onCreate = reconnecting => {
     if (FakeWebSocket.connections.length === 2) reconnecting.respond = frame => reconnecting.reply({ id: frame.id, ok: false, error: "bad token" });
   };
   socket.close();
-  await new Promise(resolve => setTimeout(resolve, 600));
-  assert.ok(FakeWebSocket.connections.length >= 3, "authentication failure stalled reconnects");
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(FakeWebSocket.connections.length, 2, "invalid credentials retried unexpectedly");
+  assert.equal(FakeWebSocket.connections[1]?.readyState, 3, "failed authentication left a live socket");
   client.close();
 });

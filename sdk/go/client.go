@@ -66,14 +66,22 @@ type AckResult struct {
 type Schedule struct {
 	Key, Event, After, At, IdempotencyKey string
 	Data                                  any
-	Chain                                 any
+	Chain                                 *Chain
+}
+
+// Chain creates a successor schedule after its parent delivery is acknowledged.
+type Chain struct {
+	Key   string `json:"key"`
+	Event string `json:"event"`
+	After string `json:"after"`
+	Data  any    `json:"data,omitempty"`
 }
 
 // Throttle permits one immediate delivery for Key, then suppresses triggers for Cooldown.
 type Throttle struct {
 	Key, Event, Cooldown, IdempotencyKey string
 	Data                                 any
-	Chain                                any
+	Chain                                *Chain
 }
 
 func Connect(ctx context.Context, url, token string) (*Client, error) {
@@ -122,6 +130,9 @@ func (e Event) Ack(ctx context.Context) (AckResult, error) {
 	return requestAs[AckResult](e.client, ctx, map[string]any{"op": "delivery.ack", "deliveryId": e.ID, "idempotencyKey": "ack:" + e.ID})
 }
 func (c *Client) Set(ctx context.Context, s Schedule) (ScheduleResult, error) {
+	if (s.After == "") == (s.At == "") {
+		return ScheduleResult{}, errors.New("exactly one of after or at required")
+	}
 	return requestAs[ScheduleResult](c, ctx, map[string]any{"op": "schedule.set", "key": s.Key, "event": s.Event, "after": s.After, "at": s.At, "data": s.Data, "chain": s.Chain, "idempotencyKey": s.IdempotencyKey})
 }
 func (c *Client) Throttle(ctx context.Context, t Throttle) (ThrottleResult, error) {

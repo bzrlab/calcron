@@ -12,7 +12,7 @@ Scope: ship documented, package-ready Node and Go application SDKs with complete
 - [x] G1: Node SDK builds, typechecks, and exercises its public protocol client
   CHECK: npm --prefix sdk/node test
   EXPECT: node sdk verification passed
-  EVIDENCE: automatic-evidence=v1; definition-sha256=6b29e89e3c554266a72828e95ed5bf524d2c9cfd0e02adabe8a6f951431d761d; exit=0; EXPECT=matched; output-sha256=1a7447e5384c09bf065675f367947baf839340dc0dce835edbd42d7e046d7e79; output-bytes=1138; shell=/bin/sh; cwd=/mnt/Development/Projects/calcron; path=e6f1e170844d/48 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=6b29e89e3c554266a72828e95ed5bf524d2c9cfd0e02adabe8a6f951431d761d; exit=0; EXPECT=matched; output-sha256=cddc30cceb26492871c9f4ee55802d14a24d369cc673f127b51856b13a6a1989; output-bytes=1139; shell=/bin/sh; cwd=/mnt/Development/Projects/calcron; path=e6f1e170844d/48 entries
 
 - [x] G2: Go SDK exercises its public protocol client
   CHECK: GOCACHE=/tmp/calcron-go-build go test ./sdk/go -count=1

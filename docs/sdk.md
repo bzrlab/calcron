@@ -25,6 +25,21 @@ Every state-changing operation requires an application-supplied idempotency key.
 
 `set` and `throttle` accept a payload as `data`. A `chain` has `key`, `event`, `after`, and optional `data`; Calcron creates that successor only after the parent delivery is acknowledged. A chain is not business completion.
 
+## API reference
+
+| SDK | Method | Parameters |
+| --- | --- | --- |
+| Node | `set(schedule)` | `key`, `event`, exactly one of `after` / `at`, optional `data` / `chain`, `idempotencyKey` → `ScheduleResult` |
+| Node | `throttle(request)` | `key`, `event`, `cooldown`, optional `data` / `chain`, `idempotencyKey` → `ThrottleResult` |
+| Node | `cancel(key, idempotencyKey)` / `extend(key, by, idempotencyKey)` | schedule key and mutation → `CancelResult` / `{ runAt }` |
+| Node | `start(name, idempotencyKey, data?)` / `signal(event, correlationKey, idempotencyKey, data?)` | workflow start or correlated completion → `WorkflowResult` / `SignalResult` |
+| Node | `on(event, handler)` | handler receives `{ id, data, ack() }`; `ack()` returns `AckResult` |
+| Go | `Set(ctx, Schedule)` / `Throttle(ctx, Throttle)` | Same fields as Node; `Chain` is `{ Key, Event, After, Data }` → typed result and `error` |
+| Go | `Cancel`, `Extend`, `Start`, `Signal` | Same positional fields as Node, prefixed with `context.Context` → typed result and `error` |
+| Go | `On(event, func(Event))` | `Event` has `ID`, `Name`, `Data`; `Ack(ctx)` returns `AckResult, error` |
+
+Node rejects connection/authentication and server failures as `Error`; a pending request rejects with `Calcron disconnected` if its socket is lost. Go returns those failures as `error`; `Set` also rejects a schedule that does not provide exactly one deadline. Server validation errors include missing required fields, malformed durations or timestamps, and unknown workflow or schedule names.
+
 ## Delivery and completion
 
 Deliveries are **at least once**. The same delivery ID can arrive more than once after a disconnect or missed acknowledgement. Make the handler's durable effect idempotent by delivery ID or by the business object before calling `ack` / `Ack`.
