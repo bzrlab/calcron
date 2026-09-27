@@ -5,6 +5,7 @@ const second = process.env.CALCRON_SECOND_URL;
 const adminToken = process.env.CALCRON_ADMIN_TOKEN ?? "change-me";
 const composeProject = process.env.CALCRON_E2E_PROJECT;
 const composeFile = process.env.CALCRON_E2E_COMPOSE_FILE ?? "compose.yaml";
+const composeFiles = ["--file", composeFile, ...(process.env.CALCRON_E2E_OVERRIDE_FILE ? ["--file", process.env.CALCRON_E2E_OVERRIDE_FILE] : [])];
 const wsURL = url => url.replace(/^http/, "ws") + "/ws";
 const sleep = ms => new Promise(ok => setTimeout(ok, ms));
 class Client {
@@ -22,7 +23,7 @@ const connect = (url, token) => new Client(url, token).connect();
 const planNodes = plan => [plan, ...(plan.Plans ?? []).flatMap(planNodes)];
 const queryPlan = sql => {
   if (!composeProject) return null;
-  const raw = execFileSync("docker", ["compose", "--project-name", composeProject, "--file", composeFile, "exec", "-T", "-e", "PGOPTIONS=-c enable_seqscan=off", "postgres", "psql", "-U", "calcron", "-d", "calcron", "-X", "-q", "-t", "-A", "-c", `explain (format json) ${sql}`], { encoding: "utf8" });
+  const raw = execFileSync("docker", ["compose", "--project-name", composeProject, ...composeFiles, "exec", "-T", "-e", "PGOPTIONS=-c enable_seqscan=off", "postgres", "psql", "-U", "calcron", "-d", "calcron", "-X", "-q", "-t", "-A", "-c", `explain (format json) ${sql}`], { encoding: "utf8" });
   return JSON.parse(raw)[0].Plan;
 };
 const assertPlanUses = (label, sql, index) => {

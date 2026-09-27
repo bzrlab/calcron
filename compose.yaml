@@ -1,23 +1,53 @@
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: calcron
-      POSTGRES_PASSWORD: calcron
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: calcron
-    ports: ["5433:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U calcron"]
       interval: 2s
       timeout: 2s
       retries: 20
+    networks:
+      - default
+
   calcron:
     build: .
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://calcron:calcron@postgres:5432/calcron?sslmode=disable
-      CALCRON_ADMIN_TOKEN: change-me
+      DATABASE_URL: postgres://calcron:${POSTGRES_PASSWORD}@postgres:5432/calcron?sslmode=disable
+      CALCRON_ADMIN_TOKEN: ${CALCRON_ADMIN_TOKEN:?set CALCRON_ADMIN_TOKEN in .env}
       CALCRON_RETRY_BASE: ${CALCRON_RETRY_BASE:-1s}
-    ports: ["8080:8080"]
+      PORT: "8080"
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.calcron.rule=Host(`calcron.bzr.lt`)
+      - traefik.http.routers.calcron.entrypoints=web
+      - traefik.http.services.calcron.loadbalancer.server.port=8080
+    networks:
+      - default
+      - proxy
+
+volumes:
+  pgdata:
+
+networks:
+  proxy:
+    external: true
