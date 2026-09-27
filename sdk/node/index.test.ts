@@ -7,6 +7,7 @@ type Frame = Record<string, unknown>;
 class FakeWebSocket {
   static readonly OPEN = 1;
   static connections: FakeWebSocket[] = [];
+  static onCreate: ((socket: FakeWebSocket) => void) | undefined;
   readyState = FakeWebSocket.OPEN;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -16,6 +17,7 @@ class FakeWebSocket {
 
   constructor(_url: string) {
     FakeWebSocket.connections.push(this);
+    FakeWebSocket.onCreate?.(this);
     queueMicrotask(() => this.onopen?.());
   }
 
@@ -35,6 +37,7 @@ class FakeWebSocket {
 
 function installFakeWebSocket() {
   FakeWebSocket.connections = [];
+  FakeWebSocket.onCreate = undefined;
   globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
 }
 
@@ -118,5 +121,16 @@ test("reconnects after a transport loss", async () => {
     };
     check();
   });
+  client.close();
+});
+
+test("keeps retrying when authentication fails during reconnect", async () => {
+  const { client, socket } = await connected();
+  FakeWebSocket.onCreate = reconnecting => {
+    if (FakeWebSocket.connections.length === 2) reconnecting.respond = frame => reconnecting.reply({ id: frame.id, ok: false, error: "bad token" });
+  };
+  socket.close();
+  await new Promise(resolve => setTimeout(resolve, 600));
+  assert.ok(FakeWebSocket.connections.length >= 3, "authentication failure stalled reconnects");
   client.close();
 });

@@ -104,9 +104,23 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 			id := frame["id"]
 			switch frame["op"] {
 			case "schedule.set":
+				if frame["key"] == "invalid-deadline" {
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"scheduleId":"invalid","runAt":"2026-09-28T10:00:00Z"}}`))
+					continue
+				}
+				chain, valid := frame["chain"].(map[string]any)
+				if !valid || chain["key"] != "invoice:42:overdue" || chain["after"] != "24h" {
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":false,"error":"invalid chain"}`))
+					continue
+				}
 				_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"scheduleId":"s-1","runAt":"2026-09-28T10:00:00Z"}}`))
 				_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"op":"delivery","deliveryId":"d-1","event":"invoice.due","data":{"invoiceId":42}}`))
 			case "schedule.throttle":
+				chain, valid := frame["chain"].(map[string]any)
+				if !valid || chain["key"] != "invoice:42:overdue" || chain["after"] != "24h" {
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":false,"error":"invalid chain"}`))
+					continue
+				}
 				_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"triggered":true}}`))
 			case "schedule.cancel":
 				_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"cancelled":true}}`))
@@ -137,11 +151,12 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 	defer c.Close()
 	delivered := make(chan Event, 1)
 	c.On("invoice.due", func(event Event) { delivered <- event })
-	set, err := c.Set(ctx, Schedule{Key: "invoice:42", Event: "invoice.due", After: "1h", IdempotencyKey: "set:invoice:42:v1"})
+	chain := &Chain{Key: "invoice:42:overdue", Event: "invoice.overdue", After: "24h", Data: map[string]any{"invoiceId": 42}}
+	set, err := c.Set(ctx, Schedule{Key: "invoice:42", Event: "invoice.due", After: "1h", Chain: chain, IdempotencyKey: "set:invoice:42:v1"})
 	if err != nil || set.ScheduleID != "s-1" {
 		t.Fatalf("set = %#v, %v", set, err)
 	}
-	throttled, err := c.Throttle(ctx, Throttle{Key: "invoice:42", Event: "invoice.due", Cooldown: "5m", IdempotencyKey: "throttle:invoice:42:v1"})
+	throttled, err := c.Throttle(ctx, Throttle{Key: "invoice:42", Event: "invoice.due", Cooldown: "5m", Chain: chain, IdempotencyKey: "throttle:invoice:42:v1"})
 	if err != nil || !throttled.Triggered {
 		t.Fatalf("throttle = %#v, %v", throttled, err)
 	}
@@ -160,6 +175,9 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 	signal, err := c.Signal(ctx, "invoice.paid", "invoice:42", "signal:invoice:42:v1", map[string]bool{"paid": true})
 	if err != nil || signal.Matched != 1 {
 		t.Fatalf("signal = %#v, %v", signal, err)
+	}
+	if _, err = c.Set(ctx, Schedule{Key: "invalid-deadline", Event: "invoice.due", IdempotencyKey: "invalid-deadline:v1"}); err == nil {
+		t.Fatal("Set accepted a schedule without after or at")
 	}
 	select {
 	case event := <-delivered:
