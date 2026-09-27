@@ -13,12 +13,14 @@ export function DataTable<T extends Record<string, unknown>>({
   loading,
   empty = "No rows.",
   onRowClick,
+  selectedId,
 }: {
   columns: Column<T>[];
   rows: T[];
   loading?: boolean;
-  empty?: string;
+  empty?: ReactNode;
   onRowClick?: (row: T) => void;
+  selectedId?: string;
 }) {
   return (
     <div className="overflow-x-auto rounded-box border border-base-300 bg-base-100">
@@ -50,7 +52,7 @@ export function DataTable<T extends Record<string, unknown>>({
           {rows.map((row, i) => (
             <tr
               key={String(row.id ?? i)}
-              className={onRowClick ? "cursor-pointer hover" : ""}
+              className={`${onRowClick ? "cursor-pointer hover" : ""} ${selectedId !== undefined && row.id === selectedId ? "bg-base-200" : ""}`}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
             >
               {columns.map((c) => (

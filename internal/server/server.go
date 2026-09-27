@@ -65,6 +65,9 @@ type frame struct {
 	MissedPolicy   string          `json:"missedPolicy,omitempty"`
 	DeliveryID     string          `json:"deliveryId,omitempty"`
 	TokenID        string          `json:"tokenId,omitempty"`
+	SubjectType    string          `json:"subjectType,omitempty"`
+	SubjectID      string          `json:"subjectId,omitempty"`
+	Before         int64           `json:"before,omitempty"`
 }
 type reply struct {
 	ID    string `json:"id,omitempty"`
@@ -87,7 +90,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	}
 	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase}
 	s.commands = newCommandRouter(s)
-	s.dashboardReads = newDashboardRead(db)
+	s.dashboardReads = newDashboardRead(db, s.hub)
 	s.workflows = newWorkflowEngine(s)
 	go s.loop(ctx)
 	return s, nil
@@ -173,6 +176,15 @@ func (h *hub) peers(app string) []*peer {
 	out := make([]*peer, 0, len(h.apps[app]))
 	for p := range h.apps[app] {
 		out = append(out, p)
+	}
+	return out
+}
+func (h *hub) connected() []string {
+	h.RLock()
+	defer h.RUnlock()
+	out := make([]string, 0, len(h.apps))
+	for app := range h.apps {
+		out = append(out, app)
 	}
 	return out
 }

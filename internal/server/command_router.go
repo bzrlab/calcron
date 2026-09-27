@@ -51,7 +51,7 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 		case "dashboard.stats":
 			return s.dashboardStats(ctx)
 		case "dashboard.list":
-			return s.dashboardReads.list(ctx, f.Name)
+			return s.dashboardReads.list(ctx, f)
 		case "delivery.replay":
 			return s.replayDelivery(ctx, f)
 		case "delivery.cancel":

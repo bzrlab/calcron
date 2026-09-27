@@ -1,72 +1,140 @@
+import { useMemo, useState } from "react";
 import { useAdmin } from "../lib/admin";
 import { useList } from "../lib/useList";
+import { useShell } from "../lib/shell";
 import { DataTable, type Column } from "../components/DataTable";
 import { StatusBadge } from "../components/StatusBadge";
+import { AppName, Chips, Drawer, Fields, IdChip, Pre, Section, SubjectHistory } from "../components/ui";
 import { fmt, timeAgo } from "../lib/format";
 
 type Delivery = {
   id: string;
+  schedule_id: string | null;
+  workflow_instance_id: string | null;
   application_id: string;
   event: string;
+  payload: unknown;
   status: string;
   attempts: number;
   next_attempt_at: string;
+  last_sent_at: string | null;
+  acked_at: string | null;
   created_at: string;
 };
 
-export function Deliveries({ refresh }: { refresh: number }) {
-  const { send } = useAdmin();
-  const { rows, loading, reload } = useList<Delivery>("deliveries", refresh);
+type Filter = "all" | "blocked" | "pending" | "acked" | "cancelled";
+const FILTERS: Filter[] = ["blocked", "pending", "acked", "cancelled", "all"];
 
-  async function act(op: "delivery.replay" | "delivery.cancel", id: string) {
-    await send({ op, deliveryId: id });
+export function Deliveries() {
+  const { send } = useAdmin();
+  const { rows, loading, reload } = useList<Delivery>("deliveries");
+  const { selected, select, go, apps, notify, confirm, appName } = useShell();
+  const [picked, setPicked] = useState<Filter | null>(null);
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: rows.length };
+    for (const d of rows) c[d.status] = (c[d.status] ?? 0) + 1;
+    return c;
+  }, [rows]);
+  const filter: Filter = picked ?? (counts.blocked ? "blocked" : "all");
+  const visible = filter === "all" ? rows : rows.filter((d) => d.status === filter);
+  const current = rows.find((d) => d.id === selected);
+
+  async function replay(d: Delivery) {
+    const r = await send({ op: "delivery.replay", deliveryId: d.id });
+    const done = r.ok && (r.data as { replayed?: boolean })?.replayed;
+    notify(done ? `Replayed ${d.event} to ${appName(d.application_id)}` : r.error ?? `Not replayed: delivery is ${d.status}`, !!done);
+    void reload();
+  }
+
+  async function cancel(d: Delivery) {
+    const yes = await confirm({
+      title: `Cancel delivery ${d.id.slice(0, 10)}…?`,
+      body: `${appName(d.application_id)} will not receive ${d.event}. Replay can restore it later.`,
+      action: "Cancel delivery",
+    });
+    if (!yes) return;
+    const r = await send({ op: "delivery.cancel", deliveryId: d.id });
+    const done = r.ok && (r.data as { cancelled?: boolean })?.cancelled;
+    notify(done ? `Cancelled ${d.event}` : r.error ?? `Not cancelled: delivery is ${d.status}`, !!done);
     void reload();
   }
 
   const columns: Column<Delivery>[] = [
-    { key: "event", label: "Event", render: (d) => <span className="font-medium">{d.event}</span> },
-    { key: "app", label: "Application", render: (d) => <code className="text-xs text-base-content/60">{d.application_id.slice(0, 10)}…</code> },
     { key: "status", label: "Status", render: (d) => <StatusBadge value={d.status} /> },
+    { key: "event", label: "Event", render: (d) => <span className="font-medium">{d.event}</span> },
+    { key: "app", label: "Application", render: (d) => <AppName id={d.application_id} /> },
     { key: "attempts", label: "Attempts", render: (d) => <span className="tabular-nums">{d.attempts}</span> },
-    { key: "next", label: "Next attempt", render: (d) => <span title={fmt(d.next_attempt_at)}>{timeAgo(d.next_attempt_at)}</span> },
-    { key: "id", label: "Delivery ID", render: (d) => <code className="text-xs text-base-content/60">{d.id.slice(0, 10)}…</code> },
     {
-      key: "actions",
-      label: "",
-      className: "text-right",
-      render: (d) => (
-        <div className="flex justify-end gap-1">
-          <button
-            className="btn btn-ghost btn-xs"
-            disabled={d.status !== "blocked" && d.status !== "cancelled"}
-            onClick={() => void act("delivery.replay", d.id)}
-          >
-            replay
-          </button>
-          <button
-            className="btn btn-ghost btn-xs text-error"
-            disabled={d.status !== "pending" && d.status !== "blocked"}
-            onClick={() => void act("delivery.cancel", d.id)}
-          >
-            cancel
-          </button>
-        </div>
-      ),
+      key: "next",
+      label: "Next attempt",
+      render: (d) => (d.status === "pending" ? <span title={fmt(d.next_attempt_at)}>{timeAgo(d.next_attempt_at)}</span> : <span className="text-base-content/40">—</span>),
     },
+    { key: "created", label: "Created", render: (d) => <span className="text-xs text-base-content/60" title={fmt(d.created_at)}>{timeAgo(d.created_at)}</span> },
   ];
+
+  const connected = current && apps.find((a) => a.id === current.application_id)?.connected;
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">Deliveries</h2>
-          <p className="text-sm text-base-content/60">
-            Durable attempts. Replay blocked work or cancel it. Delivery ID is stable across retries.
-          </p>
-        </div>
-        <button className="btn btn-ghost btn-sm" onClick={() => void reload()}>Refresh</button>
+      <header>
+        <h2 className="text-xl font-semibold">Deliveries</h2>
+        <p className="text-sm text-base-content/60">
+          Durable at-least-once attempts. Delivery ID is stable across retries; acknowledgement is not business completion.
+        </p>
       </header>
-      <DataTable columns={columns} rows={rows} loading={loading} empty="No deliveries." />
+      <Chips<Filter>
+        value={filter}
+        onChange={setPicked}
+        options={FILTERS.map((f) => ({ value: f, label: f === "all" ? "All" : f[0].toUpperCase() + f.slice(1), count: counts[f] ?? 0 }))}
+      />
+      <DataTable
+        columns={columns}
+        rows={visible}
+        loading={loading}
+        empty={filter === "blocked" ? "Nothing blocked." : "No deliveries."}
+        onRowClick={(d) => select(d.id)}
+        selectedId={selected}
+      />
+
+      {current && (
+        <Drawer title={current.event} onClose={() => select()}>
+          <div className="flex gap-2">
+            <button className="btn btn-primary btn-sm" disabled={current.status !== "blocked" && current.status !== "cancelled"} onClick={() => void replay(current)}>
+              Replay
+            </button>
+            <button className="btn btn-outline btn-error btn-sm" disabled={current.status !== "pending" && current.status !== "blocked"} onClick={() => void cancel(current)}>
+              Cancel
+            </button>
+          </div>
+          {current.status === "pending" && !connected && (
+            <div role="alert" className="alert py-2 text-sm">
+              {appName(current.application_id)} is offline. Delivery resumes when it reconnects; this is not a failure.
+            </div>
+          )}
+          {current.status === "pending" && connected && current.attempts > 0 && (
+            <div role="alert" className="alert alert-warning py-2 text-sm">
+              {appName(current.application_id)} is online but has not acknowledged after {current.attempts} attempt(s).
+            </div>
+          )}
+          <Fields
+            rows={[
+              ["Delivery ID", <IdChip value={current.id} />],
+              current.schedule_id
+                ? ["Schedule", <IdChip value={current.schedule_id} onOpen={() => go("schedules", current.schedule_id!)} />]
+                : ["Workflow instance", <IdChip value={current.workflow_instance_id ?? ""} onOpen={() => go("workflows", current.workflow_instance_id!)} />],
+              ["Application", <AppName id={current.application_id} />],
+              ["Status", <StatusBadge value={current.status} />],
+              ["Attempts", current.attempts],
+              ["Last sent", current.last_sent_at ? fmt(current.last_sent_at) : "never"],
+              ["Acknowledged", current.acked_at ? fmt(current.acked_at) : "—"],
+              ["Next attempt", current.status === "pending" ? fmt(current.next_attempt_at) : "—"],
+            ]}
+          />
+          <Section title="Payload"><Pre value={current.payload} /></Section>
+          <Section title="History"><SubjectHistory type="delivery" id={current.id} /></Section>
+        </Drawer>
+      )}
     </div>
   );
 }

@@ -64,11 +64,18 @@ export function Login({
             disabled={busy || !token}
           >
             {busy && <span className="loading loading-spinner loading-sm" />}
-            Connect
+            {busy ? "Authenticating…" : "Connect"}
           </button>
           <p className="text-center text-xs text-base-content/50">
             Token stays in this tab. Sent only as the first frame.
           </p>
+          <details className="text-xs text-base-content/60">
+            <summary className="cursor-pointer">Which token?</summary>
+            <p className="mt-2">
+              Use the administrator token, <code>CALCRON_ADMIN_TOKEN</code> from the server environment. Application
+              tokens cannot open the dashboard; they belong to application SDKs and are issued from Applications.
+            </p>
+          </details>
         </div>
       </form>
     </div>

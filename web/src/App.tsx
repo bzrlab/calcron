@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminProvider, useAdmin } from "./lib/admin";
+import { ShellProvider, useShell } from "./lib/shell";
+import { timeAgo } from "./lib/format";
+import { CommandPalette } from "./components/CommandPalette";
 import { Login } from "./views/Login";
 import { Overview } from "./views/Overview";
 import { Apps } from "./views/Apps";
@@ -10,113 +13,119 @@ import { Calendars } from "./views/Calendars";
 import { History } from "./views/History";
 import { Publish } from "./views/Publish";
 
-type NavKey =
-  | "overview"
-  | "apps"
-  | "schedules"
-  | "deliveries"
-  | "workflows"
-  | "calendars"
-  | "history"
-  | "publish";
-
-const NAV: { key: NavKey; label: string; icon: string }[] = [
-  { key: "overview", label: "Overview", icon: "◧" },
-  { key: "apps", label: "Applications", icon: "◆" },
-  { key: "schedules", label: "Schedules", icon: "◷" },
-  { key: "deliveries", label: "Deliveries", icon: "➤" },
-  { key: "workflows", label: "Workflows", icon: "⌘" },
-  { key: "calendars", label: "Calendars", icon: "▦" },
-  { key: "history", label: "History", icon: "≡" },
-  { key: "publish", label: "Publish", icon: "＋" },
+const GROUPS: { label: string; items: { key: string; label: string; view: () => React.ReactNode }[] }[] = [
+  {
+    label: "Operate",
+    items: [
+      { key: "overview", label: "Overview", view: () => <Overview /> },
+      { key: "schedules", label: "Schedules", view: () => <Schedules /> },
+      { key: "workflows", label: "Workflows", view: () => <Workflows /> },
+      { key: "deliveries", label: "Deliveries", view: () => <Deliveries /> },
+    ],
+  },
+  {
+    label: "Configure",
+    items: [
+      { key: "apps", label: "Applications", view: () => <Apps /> },
+      { key: "calendars", label: "Calendars", view: () => <Calendars /> },
+      { key: "publish", label: "Publish", view: () => <Publish /> },
+    ],
+  },
+  { label: "Audit", items: [{ key: "history", label: "History", view: () => <History /> }] },
 ];
+const NAV = GROUPS.flatMap((g) => g.items);
+
+const PILL: Record<string, { cls: string; text: string }> = {
+  open: { cls: "badge-success", text: "connected" },
+  connecting: { cls: "badge-warning", text: "reconnecting" },
+  closed: { cls: "badge-error", text: "disconnected" },
+  idle: { cls: "badge-ghost", text: "idle" },
+};
+
+function Freshness() {
+  const { updatedAt } = useShell();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!updatedAt) return null;
+  return <span className="text-xs text-base-content/50">updated {timeAgo(new Date(updatedAt).toISOString())}</span>;
+}
 
 function Shell() {
-  const { state, disconnect, error, connect } = useAdmin();
-  const [nav, setNav] = useState<NavKey>("overview");
-  const [refresh, setRefresh] = useState(0);
-  const bump = useCallback(() => setRefresh((r) => r + 1), []);
-
-  useEffect(() => {
-    const hash = location.hash.replace("#", "") as NavKey;
-    if (NAV.some((n) => n.key === hash)) setNav(hash);
-  }, []);
-
-  useEffect(() => {
-    location.hash = nav;
-  }, [nav]);
-
-  if (state !== "open") {
-    return <Login onConnect={connect} error={error} />;
-  }
+  const { state, disconnect } = useAdmin();
+  const { view, go, bump } = useShell();
+  const current = NAV.find((n) => n.key === view) ?? NAV[0];
+  const pill = PILL[state];
 
   return (
     <div className="flex min-h-screen bg-base-200">
-      <aside className="w-60 shrink-0 border-r border-base-300 bg-base-100 flex flex-col">
-        <div className="flex items-center gap-3 px-5 py-5 border-b border-base-300">
-          <div className="grid h-9 w-9 place-items-center rounded-box bg-primary text-primary-content font-bold">
-            C
-          </div>
+      <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col border-r border-base-300 bg-base-100">
+        <div className="flex items-center gap-3 border-b border-base-300 px-5 py-5">
+          <div className="grid h-9 w-9 place-items-center rounded-box bg-primary font-bold text-primary-content">C</div>
           <div className="leading-tight">
             <div className="font-semibold">Calcron</div>
             <div className="text-xs text-base-content/50">operations</div>
           </div>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
-          {NAV.map((n) => (
-            <button
-              key={n.key}
-              onClick={() => setNav(n.key)}
-              className={`btn btn-ghost btn-sm w-full justify-start gap-3 font-normal ${
-                nav === n.key ? "btn-active" : ""
-              }`}
-            >
-              <span className="w-4 text-center text-base-content/60">{n.icon}</span>
-              {n.label}
-            </button>
+        <div className="p-3">
+          <CommandPalette nav={NAV} />
+        </div>
+        <nav className="flex-1 space-y-4 overflow-y-auto px-3 pb-3">
+          {GROUPS.map((g) => (
+            <div key={g.label}>
+              <div className="px-3 pb-1 text-[0.65rem] uppercase tracking-widest text-base-content/40">{g.label}</div>
+              {g.items.map((n) => (
+                <button
+                  key={n.key}
+                  onClick={() => go(n.key)}
+                  aria-current={current.key === n.key ? "page" : undefined}
+                  className={`btn btn-ghost btn-sm w-full justify-start font-normal ${current.key === n.key ? "btn-active" : ""}`}
+                >
+                  {n.label}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
-        <div className="p-3 border-t border-base-300">
-          <button className="btn btn-ghost btn-sm w-full justify-start" onClick={disconnect}>
-            Disconnect
-          </button>
+        <div className="border-t border-base-300 p-3">
+          <button className="btn btn-ghost btn-sm w-full justify-start" onClick={disconnect}>Disconnect</button>
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0">
-        <header className="flex items-center justify-between border-b border-base-300 bg-base-100 px-6 py-3">
-          <h1 className="text-sm font-medium text-base-content/60">
-            {NAV.find((n) => n.key === nav)?.label}
-          </h1>
+      <main className="min-w-0 flex-1">
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-base-300 bg-base-100 px-6 py-3">
+          <h1 className="text-sm font-medium text-base-content/60">{current.label}</h1>
           <div className="flex items-center gap-3">
-            <span className="badge badge-success badge-sm gap-1">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-success-content" />
-              connected
+            <Freshness />
+            <span className={`badge badge-sm gap-1 ${pill.cls}`} role="status">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
+              {pill.text}
             </span>
-            <button className="btn btn-ghost btn-xs" onClick={bump}>
-              refresh
-            </button>
+            <button className="btn btn-ghost btn-xs" onClick={bump} disabled={state !== "open"}>refresh</button>
           </div>
         </header>
-        <div className="p-6 max-w-7xl">
-          {nav === "overview" && <Overview refresh={refresh} />}
-          {nav === "apps" && <Apps refresh={refresh} bump={bump} />}
-          {nav === "schedules" && <Schedules refresh={refresh} />}
-          {nav === "deliveries" && <Deliveries refresh={refresh} />}
-          {nav === "workflows" && <Workflows refresh={refresh} />}
-          {nav === "calendars" && <Calendars refresh={refresh} />}
-          {nav === "history" && <History refresh={refresh} />}
-          {nav === "publish" && <Publish />}
-        </div>
+        <div className="max-w-7xl p-6">{current.view()}</div>
       </main>
     </div>
+  );
+}
+
+function Gate() {
+  const { session, connect, error } = useAdmin();
+  if (!session) return <Login onConnect={connect} error={error} />;
+  return (
+    <ShellProvider defaultView="overview">
+      <Shell />
+    </ShellProvider>
   );
 }
 
 export default function App() {
   return (
     <AdminProvider>
-      <Shell />
+      <Gate />
     </AdminProvider>
   );
 }

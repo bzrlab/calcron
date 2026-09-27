@@ -1,8 +1,8 @@
-export function timeAgo(iso?: string | null): string {
+export function timeAgo(iso?: string | null, now = Date.now()): string {
   if (!iso) return "—";
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return String(iso);
-  const s = Math.round((Date.now() - t) / 1000);
+  const s = Math.round((now - t) / 1000);
   if (s < 0) return inFuture(-s);
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.round(s / 60)}m ago`;

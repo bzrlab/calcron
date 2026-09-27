@@ -21,6 +21,8 @@ export type ConnState = "idle" | "connecting" | "open" | "closed";
 
 type Pending = { resolve: (r: Reply) => void; reject: (e: Error) => void };
 
+export class AuthRejected extends Error {}
+
 export class AdminClient {
   private ws: WebSocket | null = null;
   private n = 0;
@@ -53,7 +55,7 @@ export class AdminClient {
           .then((r) => {
             if (!r.ok) {
               this.onState?.("closed");
-              reject(new Error(r.error ?? "unauthorized"));
+              reject(new AuthRejected(r.error ?? "unauthorized"));
               return;
             }
             this.onState?.("open");
