@@ -31,6 +31,8 @@ void calcron.set(due);
 void calcron.start("invoice-lifecycle", "invoice:42:start:v1", { invoiceId: "42" });
 void typedDelivery;
 
+// @ts-expect-error typed events require their payload.
+void calcron.set({ key: "invoice:42", event: "invoice.due", after: "24h", idempotencyKey: "invoice:42:due:v2" });
 // @ts-expect-error event data must match the event name.
 void calcron.signal("invoice.paid", "invoice:42", "invoice:42:paid:v1", { amount: 100 });
 // @ts-expect-error workflow input must match the workflow name.

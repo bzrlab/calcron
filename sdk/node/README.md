@@ -11,7 +11,8 @@ npm install @calcron/node
 ```ts
 import { Calcron } from "@calcron/node";
 
-const calcron = new Calcron(process.env.CALCRON_URL!, process.env.CALCRON_TOKEN!);
+type Events = { "invoice.due": { invoiceId: string } };
+const calcron = new Calcron<Events>(process.env.CALCRON_URL!, process.env.CALCRON_TOKEN!);
 calcron.on("invoice.due", async delivery => {
   await persistReceipt(delivery.id, delivery.data); // must be idempotent
   await delivery.ack();
@@ -26,4 +27,5 @@ await calcron.set({
 ```
 
 Read the [SDK guide](https://github.com/calcron/calcron/blob/main/docs/sdk.md)
-for every operation, delivery and idempotency rules, and Go examples.
+for typed event contracts, every operation, delivery and idempotency rules, and
+Go examples.

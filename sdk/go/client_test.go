@@ -162,7 +162,7 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 	if err != nil || set.ScheduleID != "s-1" {
 		t.Fatalf("set = %#v, %v", set, err)
 	}
-	typed, err := SetTyped(ctx, c, TypedSchedule[invoiceDueData]{Key: "invoice:43", Event: invoiceDue, After: "1h", Data: invoiceDueData{InvoiceID: 43}, Chain: &TypedChain[invoiceDueData]{Key: "invoice:43:overdue", Event: invoiceDue, After: "24h"}, IdempotencyKey: "set:invoice:43:v1"})
+	typed, err := SetTyped(ctx, c, TypedSchedule[invoiceDueData]{Key: "invoice:43", Event: invoiceDue, After: "1h", Data: invoiceDueData{InvoiceID: 43}, Chain: &TypedChain[invoiceDueData]{Key: "invoice:42:overdue", Event: invoiceDue, After: "24h"}, IdempotencyKey: "set:invoice:43:v1"})
 	if err != nil || typed.ScheduleID != "s-1" {
 		t.Fatalf("typed set = %#v, %v", typed, err)
 	}

@@ -37,6 +37,94 @@ type Event struct {
 	client   *Client
 }
 
+// EventType binds an application event name to its JSON payload type.
+// Construct it once with EventOf and reuse that value for schedules, signals,
+// and delivery handlers.
+type EventType[T any] struct{ name string }
+
+// EventOf declares an application event and its payload type.
+func EventOf[T any](name string) EventType[T] { return EventType[T]{name: name} }
+
+// WorkflowType binds a workflow name to the type of input used to start it.
+type WorkflowType[T any] struct{ name string }
+
+// WorkflowOf declares a workflow and its input type.
+func WorkflowOf[T any](name string) WorkflowType[T] { return WorkflowType[T]{name: name} }
+
+// TypedDelivery is a delivery decoded into the payload associated with EventType.
+type TypedDelivery[T any] struct {
+	ID   string
+	Data T
+	raw  Event
+}
+
+// Ack acknowledges the underlying durable delivery.
+func (e TypedDelivery[T]) Ack(ctx context.Context) (AckResult, error) { return e.raw.Ack(ctx) }
+
+// OnTyped decodes deliveries for event before invoking handler. Invalid payloads
+// are left unacknowledged, so Calcron can retry them after the application fixes
+// the incompatible deployment.
+func OnTyped[T any](c *Client, event EventType[T], handler func(TypedDelivery[T])) {
+	c.On(event.name, func(raw Event) {
+		var data T
+		if json.Unmarshal(raw.Data, &data) == nil {
+			handler(TypedDelivery[T]{ID: raw.ID, Data: data, raw: raw})
+		}
+	})
+}
+
+// TypedChain creates a successor that uses the same typed event payload.
+type TypedChain[T any] struct {
+	Key   string
+	Event EventType[T]
+	After string
+	Data  T
+}
+
+// TypedSchedule pairs a schedule event with the matching payload type.
+type TypedSchedule[T any] struct {
+	Key, After, At, IdempotencyKey string
+	Event                          EventType[T]
+	Data                           T
+	Chain                          *TypedChain[T]
+}
+
+// SetTyped creates or replaces a schedule with a payload tied to its event.
+func SetTyped[T any](ctx context.Context, c *Client, s TypedSchedule[T]) (ScheduleResult, error) {
+	var chain *Chain
+	if s.Chain != nil {
+		chain = &Chain{Key: s.Chain.Key, Event: s.Chain.Event.name, After: s.Chain.After, Data: s.Chain.Data}
+	}
+	return c.Set(ctx, Schedule{Key: s.Key, Event: s.Event.name, After: s.After, At: s.At, Data: s.Data, Chain: chain, IdempotencyKey: s.IdempotencyKey})
+}
+
+// TypedThrottle pairs a throttled event with the matching payload type.
+type TypedThrottle[T any] struct {
+	Key, Cooldown, IdempotencyKey string
+	Event                         EventType[T]
+	Data                          T
+	Chain                         *TypedChain[T]
+}
+
+// ThrottleTyped triggers a typed leading-edge throttle.
+func ThrottleTyped[T any](ctx context.Context, c *Client, t TypedThrottle[T]) (ThrottleResult, error) {
+	var chain *Chain
+	if t.Chain != nil {
+		chain = &Chain{Key: t.Chain.Key, Event: t.Chain.Event.name, After: t.Chain.After, Data: t.Chain.Data}
+	}
+	return c.Throttle(ctx, Throttle{Key: t.Key, Event: t.Event.name, Cooldown: t.Cooldown, Data: t.Data, Chain: chain, IdempotencyKey: t.IdempotencyKey})
+}
+
+// SignalTyped sends a correlated signal with the event's payload type.
+func SignalTyped[T any](ctx context.Context, c *Client, event EventType[T], correlationKey, idempotencyKey string, data T) (SignalResult, error) {
+	return c.Signal(ctx, event.name, correlationKey, idempotencyKey, data)
+}
+
+// StartTyped starts a workflow with input tied to its workflow name.
+func StartTyped[T any](ctx context.Context, c *Client, workflow WorkflowType[T], idempotencyKey string, data T) (WorkflowResult, error) {
+	return c.Start(ctx, workflow.name, idempotencyKey, data)
+}
+
 // ScheduleResult identifies a schedule and its RFC3339 deadline.
 type ScheduleResult struct {
 	ScheduleID string    `json:"scheduleId"`

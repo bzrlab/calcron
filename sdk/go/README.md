@@ -10,7 +10,9 @@ client, err := cron.Connect(ctx, os.Getenv("CALCRON_URL"), os.Getenv("CALCRON_TO
 if err != nil { log.Fatal(err) }
 defer client.Close()
 
-client.On("invoice.due", func(event cron.Event) {
+type InvoiceDue struct { InvoiceID string `json:"invoiceId"` }
+var InvoiceDueEvent = cron.EventOf[InvoiceDue]("invoice.due")
+cron.OnTyped(client, InvoiceDueEvent, func(event cron.TypedDelivery[InvoiceDue]) {
 	if err := persistReceipt(event.ID, event.Data); err != nil { return }
 	_, _ = event.Ack(context.Background())
 })

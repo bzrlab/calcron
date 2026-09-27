@@ -40,6 +40,51 @@ Every state-changing operation requires an application-supplied idempotency key.
 
 Node rejects connection/authentication and server failures as `Error`; a pending request rejects with `Calcron disconnected` if its socket is lost. Go returns those failures as `error`; `Set` also rejects a schedule that does not provide exactly one deadline. Server validation errors include missing required fields, malformed durations or timestamps, and unknown workflow or schedule names.
 
+## Typed event contracts
+
+Define your event schema once and give it to the SDK. TypeScript then rejects an
+unknown event name, a wrong payload, a missing required payload, and a workflow
+started with the wrong input before code runs.
+
+```ts
+import { Calcron } from "@calcron/node";
+
+type Events = {
+  "invoice.due": { invoiceId: string; amount: number };
+  "invoice.paid": { invoiceId: string; paidAt: string };
+};
+type Workflows = { "invoice-lifecycle": { invoiceId: string } };
+
+const calcron = new Calcron<Events, Workflows>(url, token);
+calcron.on("invoice.due", delivery => delivery.data.amount); // number
+await calcron.set({ key: "invoice:42", event: "invoice.due", after: "24h", data: { invoiceId: "42", amount: 100 }, idempotencyKey: "invoice:42:due:v1" });
+await calcron.signal("invoice.paid", "invoice:42", "invoice:42:paid:v1", { invoiceId: "42", paidAt: new Date().toISOString() });
+await calcron.start("invoice-lifecycle", "invoice:42:start:v1", { invoiceId: "42" });
+```
+
+Go binds each event-name value to its payload through generics. Declare the
+value once, then use `OnTyped`, `SetTyped`, `ThrottleTyped`, and `SignalTyped`;
+the compiler infers the payload from that value and `TypedDelivery` is already
+decoded. `EventOf` is the Go equivalent of the TypeScript event map.
+
+```go
+type InvoiceDue struct { InvoiceID string `json:"invoiceId"`; Amount int `json:"amount"` }
+var InvoiceDueEvent = cron.EventOf[InvoiceDue]("invoice.due")
+
+cron.OnTyped(client, InvoiceDueEvent, func(delivery cron.TypedDelivery[InvoiceDue]) {
+	_ = persistReceipt(delivery.ID, delivery.Data.Amount)
+	_, _ = delivery.Ack(context.Background())
+})
+_, err := cron.SetTyped(ctx, client, cron.TypedSchedule[InvoiceDue]{
+	Key: "invoice:42", Event: InvoiceDueEvent, After: "24h",
+	Data: InvoiceDue{InvoiceID: "42", Amount: 100}, IdempotencyKey: "invoice:42:due:v1",
+})
+```
+
+Keep raw `on` / `On`, `set` / `Set`, and `signal` / `Signal` only for gradual
+migrations or dynamic event names. New application code should use the typed
+surface.
+
 ## Delivery and completion
 
 Deliveries are **at least once**. The same delivery ID can arrive more than once after a disconnect or missed acknowledgement. Make the handler's durable effect idempotent by delivery ID or by the business object before calling `ack` / `Ack`.
@@ -62,7 +107,13 @@ Use one stable, application-generated key for one intended state change:
 ```ts
 import { Calcron } from "@calcron/node";
 
-const calcron = new Calcron(process.env.CALCRON_URL!, process.env.CALCRON_TOKEN!);
+type Events = {
+  "invoice.due": { invoiceId: number };
+  "invoice.overdue": { invoiceId: number };
+  "invoice.notice": undefined;
+  "payment.confirmed": { paid: boolean };
+};
+const calcron = new Calcron<Events>(process.env.CALCRON_URL!, process.env.CALCRON_TOKEN!);
 calcron.on("invoice.due", async delivery => {
   await saveDeliveryReceipt(delivery.id, delivery.data); // idempotent transaction
   await delivery.ack();
@@ -84,15 +135,19 @@ await calcron.signal("payment.confirmed", "invoice:42", "invoice:42:paid:v1", { 
 client, err := cron.Connect(ctx, os.Getenv("CALCRON_URL"), os.Getenv("CALCRON_TOKEN"))
 if err != nil { return err }
 defer client.Close()
-client.On("invoice.due", func(event cron.Event) {
+type InvoiceDue struct { InvoiceID int `json:"invoiceId"` }
+var InvoiceDueEvent = cron.EventOf[InvoiceDue]("invoice.due")
+var InvoiceNoticeEvent = cron.EventOf[struct{}]("invoice.notice")
+var PaymentConfirmed = cron.EventOf[struct{ Paid bool `json:"paid"` }]("payment.confirmed")
+cron.OnTyped(client, InvoiceDueEvent, func(event cron.TypedDelivery[InvoiceDue]) {
 	if err := saveDeliveryReceipt(event.ID, event.Data); err != nil { return }
 	_, _ = event.Ack(context.Background())
 })
-schedule, err := client.Set(ctx, cron.Schedule{Key: "invoice:42", Event: "invoice.due", After: "24h", Data: map[string]any{"invoiceId": 42}, IdempotencyKey: "invoice:42:due:v1"})
+schedule, err := cron.SetTyped(ctx, client, cron.TypedSchedule[InvoiceDue]{Key: "invoice:42", Event: InvoiceDueEvent, After: "24h", Data: InvoiceDue{InvoiceID: 42}, IdempotencyKey: "invoice:42:due:v1"})
 if err != nil { return err }
-throttle, err := client.Throttle(ctx, cron.Throttle{Key: "invoice:42:notice", Event: "invoice.notice", Cooldown: "5m", IdempotencyKey: "invoice:42:notice:v1"})
+throttle, err := cron.ThrottleTyped(ctx, client, cron.TypedThrottle[struct{}]{Key: "invoice:42:notice", Event: InvoiceNoticeEvent, Cooldown: "5m", Data: struct{}{}, IdempotencyKey: "invoice:42:notice:v1"})
 if err != nil { return err }
 if throttle.Triggered { log.Print(schedule.RunAt) }
-_, err = client.Signal(ctx, "payment.confirmed", "invoice:42", "invoice:42:paid:v1", map[string]bool{"paid": true})
+_, err = cron.SignalTyped(ctx, client, PaymentConfirmed, "invoice:42", "invoice:42:paid:v1", struct{ Paid bool `json:"paid"` }{Paid: true})
 return err
 ```
