@@ -1,27 +1,98 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { WebSocketServer } from "ws";
-import { Calcron } from "./index.ts";
+import { Calcron, type Schedule } from "./index.ts";
 
-test("reconnects after server closes connection", async () => {
-  const server = new WebSocketServer({ port: 0 });
-  await new Promise<void>(ok => server.once("listening", ok));
-  let count = 0;
-  const again = new Promise<void>(ok => server.on("connection", socket => {
-    socket.once("message", raw => {
-      const { id } = JSON.parse(String(raw));
-      socket.send(JSON.stringify({ id, ok: true }));
-      if (++count === 1) setTimeout(() => socket.close(), 100);
-      else ok();
-    });
-  }));
-  const port = (server.address() as { port: number }).port;
-  const client = new Calcron(`ws://127.0.0.1:${port}`, "test");
+type Frame = Record<string, unknown>;
+
+class FakeWebSocket {
+  static readonly OPEN = 1;
+  static connections: FakeWebSocket[] = [];
+  readyState = FakeWebSocket.OPEN;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  sent: Frame[] = [];
+  respond: (frame: Frame) => void = frame => this.reply({ id: frame.id, ok: true, data: frame.op === "delivery.ack" ? { acked: true } : {} });
+
+  constructor(_url: string) {
+    FakeWebSocket.connections.push(this);
+    queueMicrotask(() => this.onopen?.());
+  }
+
+  send(raw: string) {
+    const frame = JSON.parse(raw) as Frame;
+    this.sent.push(frame);
+    this.respond(frame);
+  }
+
+  close() {
+    this.readyState = 3;
+    this.onclose?.();
+  }
+
+  reply(frame: Frame) { this.onmessage?.({ data: JSON.stringify(frame) }); }
+}
+
+function installFakeWebSocket() {
+  FakeWebSocket.connections = [];
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+}
+
+async function connected() {
+  installFakeWebSocket();
+  const client = new Calcron("ws://calcron.test/ws", "test");
   await client.connect();
-  let timer: ReturnType<typeof setTimeout>;
-  await Promise.race([again, new Promise((_, fail) => { timer = setTimeout(() => fail(new Error("no reconnect")), 3_000); })]);
-  clearTimeout(timer!);
-  assert.equal(count, 2);
+  return { client, socket: FakeWebSocket.connections[0]! };
+}
+
+const schedule: Schedule = {
+  key: "invoice:42",
+  event: "invoice.due",
+  after: "1h",
+  data: { invoiceId: 42 },
+  chain: { key: "invoice:42:overdue", event: "invoice.overdue", after: "24h" },
+  idempotencyKey: "schedule:invoice:42:v1",
+};
+
+test("sends typed application commands and returns their replies", async () => {
+  const { client, socket } = await connected();
+  socket.respond = frame => {
+    const data = frame.op === "schedule.set" ? { scheduleId: "s-1", runAt: "2026-09-28T10:00:00Z" }
+      : frame.op === "schedule.throttle" ? { triggered: true }
+      : frame.op === "schedule.cancel" ? { cancelled: true }
+      : frame.op === "schedule.extend" ? { runAt: "2026-09-28T11:00:00Z" }
+      : frame.op === "workflow.start" ? { instanceId: "w-1" }
+      : frame.op === "signal" ? { matched: 1 }
+      : {};
+    socket.reply({ id: frame.id, ok: true, data });
+  };
+
+  assert.deepEqual(await client.set(schedule), { scheduleId: "s-1", runAt: "2026-09-28T10:00:00Z" });
+  assert.deepEqual(await client.throttle({ ...schedule, cooldown: "5m" }), { triggered: true });
+  assert.deepEqual(await client.cancel("invoice:42", "cancel:invoice:42:v1"), { cancelled: true });
+  assert.deepEqual(await client.extend("invoice:42", "1h", "extend:invoice:42:v1"), { runAt: "2026-09-28T11:00:00Z" });
+  assert.deepEqual(await client.start("invoice-lifecycle", "start:invoice:42:v1", { invoiceId: 42 }), { instanceId: "w-1" });
+  assert.deepEqual(await client.signal("invoice.paid", "invoice:42", "signal:invoice:42:v1", { paid: true }), { matched: 1 });
+  assert.deepEqual(socket.sent.map(frame => frame.op), ["auth", "schedule.set", "schedule.throttle", "schedule.cancel", "schedule.extend", "workflow.start", "signal"]);
   client.close();
-  await new Promise<void>(ok => server.close(() => ok()));
+});
+
+test("acknowledges deliveries only when the handler calls ack", async () => {
+  const { client, socket } = await connected();
+  let delivery: { id: string; data: unknown; ack: () => Promise<unknown> } | undefined;
+  client.on("invoice.due", event => { delivery = event; });
+  socket.reply({ op: "delivery", deliveryId: "d-1", event: "invoice.due", data: { invoiceId: 42 } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(delivery?.data, { invoiceId: 42 });
+  assert.equal(socket.sent.some(frame => frame.op === "delivery.ack"), false);
+  assert.deepEqual(await delivery?.ack(), { acked: true });
+  assert.deepEqual(socket.sent.at(-1), { id: "2", op: "delivery.ack", deliveryId: "d-1", idempotencyKey: "ack:d-1" });
+  client.close();
+});
+
+test("surfaces protocol errors", async () => {
+  const { client, socket } = await connected();
+  socket.respond = frame => socket.reply({ id: frame.id, ok: false, error: "schedule not found" });
+  await assert.rejects(client.cancel("missing", "cancel:missing:v1"), /schedule not found/);
+  client.close();
 });
