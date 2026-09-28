@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"time"
+
+	"github.com/calcron/calcron/internal/calendar"
 )
 
 func (s *Server) setStartSchedule(ctx context.Context, f frame) reply {
@@ -12,11 +14,11 @@ func (s *Server) setStartSchedule(ctx context.Context, f frame) reply {
 	if f.MissedPolicy != "skip" && f.MissedPolicy != "run_once_late" && f.MissedPolicy != "catch_up" {
 		return fail("invalid missedPolicy")
 	}
-	definition, err := s.loadCalendar(ctx, f.ApplicationID, f.Calendar)
+	definition, err := s.calendars.Load(ctx, f.ApplicationID, f.Calendar)
 	if err != nil {
 		return fail(err.Error())
 	}
-	next, err := nextCalendar(definition, time.Now().UTC(), f.LocalTime)
+	next, err := calendar.NextTime(definition, time.Now().UTC(), f.LocalTime)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -25,7 +27,7 @@ func (s *Server) setStartSchedule(ctx context.Context, f frame) reply {
 		if err != nil {
 			return fail("invalid at")
 		}
-		valid, validErr := nextCalendar(definition, next.Add(-time.Nanosecond), f.LocalTime)
+		valid, validErr := calendar.NextTime(definition, next.Add(-time.Nanosecond), f.LocalTime)
 		if validErr != nil || !valid.Equal(next) {
 			return fail("at must be an eligible calendar time")
 		}
@@ -48,13 +50,13 @@ func (s *Server) startRecurring(ctx context.Context) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, app, workflow, calendar, clock, policy string
+		var id, app, workflow, calendarName, clock, policy string
 		var input []byte
 		var due time.Time
-		if rows.Scan(&id, &app, &workflow, &calendar, &clock, &policy, &input, &due) != nil {
+		if rows.Scan(&id, &app, &workflow, &calendarName, &clock, &policy, &input, &due) != nil {
 			continue
 		}
-		definition, loadErr := s.loadCalendar(ctx, app, calendar)
+		definition, loadErr := s.calendars.Load(ctx, app, calendarName)
 		if loadErr != nil {
 			continue
 		}
@@ -62,7 +64,7 @@ func (s *Server) startRecurring(ctx context.Context) {
 		if policy == "catch_up" {
 			from = due.Add(time.Second)
 		}
-		next, nextErr := nextCalendar(definition, from, clock)
+		next, nextErr := calendar.NextTime(definition, from, clock)
 		if nextErr != nil {
 			continue
 		}

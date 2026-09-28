@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/calcron/calcron/internal/application"
+	"github.com/calcron/calcron/internal/calendar"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,6 +31,8 @@ type Server struct {
 	commands       *commandRouter
 	dashboardReads *dashboardRead
 	workflows      *workflowEngine
+	applications   *application.Module
+	calendars      *calendar.Module
 }
 
 func New(ctx context.Context, c Config) (*Server, error) {
@@ -47,6 +51,8 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	s.commands = newCommandRouter(s)
 	s.dashboardReads = newDashboardRead(db, s.hub)
 	s.workflows = newWorkflowEngine(s)
+	s.applications = application.New(db, random)
+	s.calendars = calendar.New(db)
 	go s.loop(ctx)
 	return s, nil
 }

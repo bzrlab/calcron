@@ -133,7 +133,7 @@ func workflowTestServer(t *testing.T) (context.Context, *Server) {
 
 func workflowTestApp(t *testing.T, ctx context.Context, s *Server) string {
 	t.Helper()
-	created := s.createApp(ctx, frame{Name: random(), Namespace: random()})
+	created := s.applications.Create(ctx, frame{Name: random(), Namespace: random()})
 	if !created.OK {
 		t.Fatalf("create app: %#v", created)
 	}

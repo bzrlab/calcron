@@ -15,7 +15,7 @@ func TestDomainModulesShareTheProtocolSeam(t *testing.T) {
 	if frame.Op == "" {
 		t.Fatal("protocol frame must be constructible by domain modules")
 	}
-	if application.New == nil || calendar.New == nil {
+	if application.New(nil, func() string { return "id" }) == nil || calendar.New(nil) == nil {
 		t.Fatal("domain module constructor missing")
 	}
 }

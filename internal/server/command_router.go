@@ -38,19 +38,19 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 		}
 		switch commandOperation(f.Op) {
 		case operationAppCreate:
-			return s.createApp(ctx, f)
+			return s.applications.Create(ctx, f)
 		case operationAppTokenRotate:
-			return s.rotateToken(ctx, f)
+			return s.applications.RotateToken(ctx, f)
 		case operationAppTokenRevoke:
-			return s.revokeToken(ctx, f)
+			return s.applications.RevokeToken(ctx, f)
 		case operationWorkflowPublish:
 			return s.publishWorkflow(ctx, f)
 		case operationCalendarSet:
-			return s.setCalendar(ctx, f)
+			return s.calendars.Set(ctx, f)
 		case operationCalendarNext:
-			return s.nextCalendar(ctx, f)
+			return s.calendars.Next(ctx, f)
 		case operationCalendarOccurrences:
-			return s.calendarOccurrences(ctx, f)
+			return s.calendars.Occurrences(ctx, f)
 		case operationStartScheduleSet:
 			return s.setStartSchedule(ctx, f)
 		case operationDashboardStats:
