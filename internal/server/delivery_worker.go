@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/calcron/calcron/internal/schedule"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -31,10 +32,10 @@ func (s *Server) ack(ctx context.Context, app string, f frame) reply {
 		if err = tx.QueryRow(ctx, `select coalesce(chain,'null'::jsonb) from schedules where id=$1`, *scheduleID).Scan(&raw); err != nil {
 			return fail(err.Error())
 		}
-		if next, parseErr := parseChain(raw); parseErr != nil {
+		if next, parseErr := schedule.ParseChain(raw); parseErr != nil {
 			return fail(parseErr.Error())
 		} else if next.Key != "" {
-			if response := s.setTx(ctx, tx, app, frame{Key: next.Key, Event: next.Event, After: next.After, Data: next.Data}); !response.OK {
+			if response := s.schedules.SetImmediateTx(ctx, tx, app, frame{Key: next.Key, Event: next.Event, After: next.After, Data: next.Data}); !response.OK {
 				return fail("chain failed")
 			}
 		}

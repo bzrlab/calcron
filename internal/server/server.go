@@ -12,6 +12,7 @@ import (
 
 	"github.com/calcron/calcron/internal/application"
 	"github.com/calcron/calcron/internal/calendar"
+	"github.com/calcron/calcron/internal/schedule"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,6 +34,7 @@ type Server struct {
 	workflows      *workflowEngine
 	applications   *application.Module
 	calendars      *calendar.Module
+	schedules      *schedule.Module
 }
 
 func New(ctx context.Context, c Config) (*Server, error) {
@@ -53,6 +55,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	s.workflows = newWorkflowEngine(s)
 	s.applications = application.New(db, random)
 	s.calendars = calendar.New(db)
+	s.schedules = schedule.New(db, s.calendars, random, s.startWorkflow)
 	go s.loop(ctx)
 	return s, nil
 }
@@ -80,7 +83,7 @@ func (s *Server) loop(ctx context.Context) {
 			s.makeDue(ctx)
 			s.deliver(ctx)
 			s.workflows.wake(ctx)
-			s.startRecurring(ctx)
+			s.schedules.StartRecurring(ctx)
 		}
 	}
 }

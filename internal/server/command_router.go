@@ -52,7 +52,7 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 		case operationCalendarOccurrences:
 			return s.calendars.Occurrences(ctx, f)
 		case operationStartScheduleSet:
-			return s.setStartSchedule(ctx, f)
+			return s.schedules.SetStart(ctx, f)
 		case operationDashboardStats:
 			return s.dashboardStats(ctx)
 		case operationDashboardList:
@@ -74,13 +74,13 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 		}
 		switch commandOperation(f.Op) {
 		case operationScheduleSet:
-			return s.set(ctx, p.app, f)
+			return s.schedules.Set(ctx, p.app, f)
 		case operationScheduleCancel:
-			return s.cancel(ctx, p.app, f)
+			return s.schedules.Cancel(ctx, p.app, f)
 		case operationScheduleExtend:
-			return s.extend(ctx, p.app, f)
+			return s.schedules.Extend(ctx, p.app, f)
 		case operationScheduleThrottle:
-			return s.throttle(ctx, p.app, f)
+			return s.schedules.Throttle(ctx, p.app, f)
 		case operationDeliveryAck:
 			return s.ack(ctx, p.app, f)
 		case operationWorkflowStart:

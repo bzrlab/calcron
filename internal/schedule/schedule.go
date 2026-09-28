@@ -1,4 +1,4 @@
-package server
+package schedule
 
 import (
 	"context"
@@ -6,17 +6,32 @@ import (
 	"errors"
 	"time"
 
+	"github.com/calcron/calcron/internal/calendar"
+	"github.com/calcron/calcron/internal/idempotency"
+	"github.com/calcron/calcron/internal/protocol"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type chain struct {
+type Module struct {
+	db            *pgxpool.Pool
+	calendars     *calendar.Module
+	newID         func() string
+	startWorkflow func(context.Context, string, protocol.Frame) protocol.Reply
+}
+
+type Chain struct {
 	Key   string          `json:"key"`
 	Event string          `json:"event"`
 	After string          `json:"after"`
 	Data  json.RawMessage `json:"data"`
 }
 
-func deadline(f frame) (time.Time, error) {
+func New(db *pgxpool.Pool, calendars *calendar.Module, newID func() string, startWorkflow func(context.Context, string, protocol.Frame) protocol.Reply) *Module {
+	return &Module{db: db, calendars: calendars, newID: newID, startWorkflow: startWorkflow}
+}
+
+func deadline(f protocol.Frame) (time.Time, error) {
 	if f.After != "" {
 		duration, err := time.ParseDuration(f.After)
 		return time.Now().UTC().Add(duration), err
@@ -27,11 +42,11 @@ func deadline(f frame) (time.Time, error) {
 	return time.Time{}, errors.New("after or at required")
 }
 
-func parseChain(raw json.RawMessage) (chain, error) {
+func ParseChain(raw json.RawMessage) (Chain, error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return chain{}, nil
+		return Chain{}, nil
 	}
-	var next chain
+	var next Chain
 	if err := json.Unmarshal(raw, &next); err != nil {
 		return next, errors.New("invalid chain")
 	}
@@ -45,11 +60,11 @@ func parseChain(raw json.RawMessage) (chain, error) {
 	return next, nil
 }
 
-func (s *Server) set(ctx context.Context, app string, f frame) reply {
+func (m *Module) Set(ctx context.Context, app string, f protocol.Frame) protocol.Reply {
 	if f.Key == "" || f.Event == "" {
 		return fail("key and event required")
 	}
-	if _, err := parseChain(f.Chain); err != nil {
+	if _, err := ParseChain(f.Chain); err != nil {
 		return fail(err.Error())
 	}
 	runAt, err := deadline(f)
@@ -60,13 +75,13 @@ func (s *Server) set(ctx context.Context, app string, f frame) reply {
 	if len(payload) == 0 {
 		payload = []byte(`{}`)
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := m.db.Begin(ctx)
 	if err != nil {
 		return fail(err.Error())
 	}
 	defer tx.Rollback(ctx)
 	var scheduleID string
-	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain) values($1,$2,$3,$4,$5,$6,'scheduled',$7) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,updated_at=now() returning id`, random(), app, f.Key, f.Event, payload, runAt, f.Chain).Scan(&scheduleID)
+	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain) values($1,$2,$3,$4,$5,$6,'scheduled',$7) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, runAt, f.Chain).Scan(&scheduleID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -77,7 +92,7 @@ func (s *Server) set(ctx context.Context, app string, f frame) reply {
 		return fail(err.Error())
 	}
 	response := ok(map[string]any{"scheduleId": scheduleID, "runAt": runAt})
-	if err = rememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
+	if err = idempotency.RememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
 		return fail(err.Error())
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -86,11 +101,11 @@ func (s *Server) set(ctx context.Context, app string, f frame) reply {
 	return response
 }
 
-func (s *Server) cancel(ctx context.Context, app string, f frame) reply {
+func (m *Module) Cancel(ctx context.Context, app string, f protocol.Frame) protocol.Reply {
 	if f.Key == "" {
 		return fail("key required")
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := m.db.Begin(ctx)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -109,7 +124,7 @@ func (s *Server) cancel(ctx context.Context, app string, f frame) reply {
 		}
 	}
 	response := ok(map[string]bool{"cancelled": scheduleID != ""})
-	if err = rememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
+	if err = idempotency.RememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
 		return fail(err.Error())
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -118,7 +133,7 @@ func (s *Server) cancel(ctx context.Context, app string, f frame) reply {
 	return response
 }
 
-func (s *Server) extend(ctx context.Context, app string, f frame) reply {
+func (m *Module) Extend(ctx context.Context, app string, f protocol.Frame) protocol.Reply {
 	if f.Key == "" || f.By == "" {
 		return fail("key and by required")
 	}
@@ -126,7 +141,7 @@ func (s *Server) extend(ctx context.Context, app string, f frame) reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := m.db.Begin(ctx)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -140,7 +155,7 @@ func (s *Server) extend(ctx context.Context, app string, f frame) reply {
 		return fail(err.Error())
 	}
 	response := ok(map[string]any{"runAt": runAt})
-	if err = rememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
+	if err = idempotency.RememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
 		return fail(err.Error())
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -149,7 +164,7 @@ func (s *Server) extend(ctx context.Context, app string, f frame) reply {
 	return response
 }
 
-func (s *Server) throttle(ctx context.Context, app string, f frame) reply {
+func (m *Module) Throttle(ctx context.Context, app string, f protocol.Frame) protocol.Reply {
 	if f.Key == "" || f.Event == "" || f.Cooldown == "" {
 		return fail("key, event and cooldown required")
 	}
@@ -157,10 +172,10 @@ func (s *Server) throttle(ctx context.Context, app string, f frame) reply {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if _, err = parseChain(f.Chain); err != nil {
+	if _, err = ParseChain(f.Chain); err != nil {
 		return fail(err.Error())
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := m.db.Begin(ctx)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -169,7 +184,7 @@ func (s *Server) throttle(ctx context.Context, app string, f frame) reply {
 	err = tx.QueryRow(ctx, `insert into throttles(application_id,throttle_key,until_at) values($1,$2,now()+$3::interval) on conflict(application_id,throttle_key) do update set until_at=excluded.until_at where throttles.until_at<=now() returning true`, app, f.Key, duration.String()).Scan(&allowed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		response := ok(map[string]bool{"triggered": false})
-		if err = rememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
+		if err = idempotency.RememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
 			return fail(err.Error())
 		}
 		if err = tx.Commit(ctx); err != nil {
@@ -181,11 +196,11 @@ func (s *Server) throttle(ctx context.Context, app string, f frame) reply {
 		return fail(err.Error())
 	}
 	f.After = "0s"
-	if response := s.setTx(ctx, tx, app, f); !response.OK {
+	if response := m.SetImmediateTx(ctx, tx, app, f); !response.OK {
 		return response
 	}
 	response := ok(map[string]bool{"triggered": true})
-	if err = rememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
+	if err = idempotency.RememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
 		return fail(err.Error())
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -194,13 +209,13 @@ func (s *Server) throttle(ctx context.Context, app string, f frame) reply {
 	return response
 }
 
-func (s *Server) setTx(ctx context.Context, tx pgx.Tx, app string, f frame) reply {
+func (m *Module) SetImmediateTx(ctx context.Context, tx pgx.Tx, app string, f protocol.Frame) protocol.Reply {
 	payload := f.Data
 	if len(payload) == 0 {
 		payload = []byte(`{}`)
 	}
 	var scheduleID string
-	err := tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain) values($1,$2,$3,$4,$5,now(),'scheduled',$6) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,updated_at=now() returning id`, random(), app, f.Key, f.Event, payload, f.Chain).Scan(&scheduleID)
+	err := tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain) values($1,$2,$3,$4,$5,now(),'scheduled',$6) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, f.Chain).Scan(&scheduleID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -209,3 +224,6 @@ func (s *Server) setTx(ctx context.Context, tx pgx.Tx, app string, f frame) repl
 	}
 	return ok(nil)
 }
+
+func fail(err string) protocol.Reply { return protocol.Reply{Error: err} }
+func ok(data any) protocol.Reply     { return protocol.Reply{OK: true, Data: data} }
