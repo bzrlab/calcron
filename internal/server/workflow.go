@@ -19,6 +19,17 @@ func parseWorkflow(raw json.RawMessage) (workflowDefinition, error) {
 func compileCEL(expr string) (cel.Program, error) {
 	return workflow.CompileCEL(expr)
 }
+func evalCEL(expr string, input, state map[string]any) (any, error) {
+	p, err := compileCEL(expr)
+	if err != nil {
+		return nil, err
+	}
+	out, _, err := p.Eval(map[string]any{"input": input, "state": state})
+	if err != nil {
+		return nil, err
+	}
+	return out.Value(), nil
+}
 func (s *Server) publishWorkflow(ctx context.Context, f frame) reply {
 	if f.ApplicationID == "" || f.Name == "" {
 		return fail("applicationId and name required")
@@ -176,18 +187,13 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 				next = st.Next
 			} else {
 				key := st.Correlation
-				if st.CorrExpr != "" {
-					p, ce := compileCEL(st.CorrExpr)
+				if st.CorrelationExpr != "" {
+					out, ce := evalCEL(st.CorrelationExpr, in, state)
 					if ce != nil {
 						e = ce
 						break
 					}
-					out, _, ce := p.Eval(map[string]any{"input": in, "state": state})
-					if ce != nil {
-						e = ce
-						break
-					}
-					k, good := out.Value().(string)
+					k, good := out.(string)
 					if !good || k == "" {
 						e = errors.New("CEL correlationKeyExpr must return a non-empty string")
 						break
@@ -198,17 +204,12 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 				stop = true
 			}
 		case "branch":
-			p, ce := compileCEL(st.When)
+			out, ce := evalCEL(st.When, in, state)
 			if ce != nil {
 				e = ce
 				break
 			}
-			out, _, ce := p.Eval(map[string]any{"input": in, "state": state})
-			if ce != nil {
-				e = ce
-				break
-			}
-			b, good := out.Value().(bool)
+			b, good := out.(bool)
 			if !good {
 				e = errors.New("CEL branch must return bool")
 				break
@@ -221,17 +222,12 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 		case "emit":
 			data := st.Data
 			if st.DataExpr != "" {
-				p, ce := compileCEL(st.DataExpr)
+				out, ce := evalCEL(st.DataExpr, in, state)
 				if ce != nil {
 					e = ce
 					break
 				}
-				out, _, ce := p.Eval(map[string]any{"input": in, "state": state})
-				if ce != nil {
-					e = ce
-					break
-				}
-				data, _ = json.Marshal(out.Value())
+				data, _ = json.Marshal(out)
 			}
 			if len(data) == 0 {
 				data = []byte(`{}`)

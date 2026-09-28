@@ -35,7 +35,7 @@ func (s *Server) ack(ctx context.Context, app string, f frame) reply {
 		if next, parseErr := schedule.ParseChain(raw); parseErr != nil {
 			return fail(parseErr.Error())
 		} else if next.Key != "" {
-			if response := s.schedules.SetImmediateTx(ctx, tx, app, frame{Key: next.Key, Event: next.Event, After: next.After, Data: next.Data}); !response.OK {
+			if response := s.schedules.SetAfterTx(ctx, tx, app, frame{Key: next.Key, Event: next.Event, After: next.After, Data: next.Data}); !response.OK {
 				return fail("chain failed")
 			}
 		}

@@ -139,6 +139,49 @@ func TestWorkflowWaitsForCorrelatedSignal(t *testing.T) {
 	}
 }
 
+func TestChainWaitsItsDelayAfterAcknowledgement(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "chain-delay")
+	app := dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+	write(t, ctx, app, map[string]any{"op": "schedule.set", "idempotencyKey": "warn", "key": "ticket:9:idle", "event": "ticket.idle", "after": "1ms", "chain": map[string]any{"key": "ticket:9:close", "event": "ticket.close", "after": "1h"}})
+	if got := read(t, ctx, app); got["ok"] != true {
+		t.Fatalf("set: %#v", got)
+	}
+	warn := delivery(t, ctx, app)
+	write(t, ctx, app, map[string]any{"op": "delivery.ack", "deliveryId": warn["deliveryId"], "idempotencyKey": "warn-ack"})
+	if got := read(t, ctx, app); got["ok"] != true {
+		t.Fatalf("ack: %#v", got)
+	}
+	var runAt time.Time
+	for _, row := range dashboardRows(t, ctx, admin, "schedules") {
+		if row["application_id"] == appID && row["schedule_key"] == "ticket:9:close" {
+			runAt, _ = time.Parse(time.RFC3339Nano, row["run_at"].(string))
+		}
+	}
+	if time.Until(runAt) < 59*time.Minute {
+		t.Fatalf("chain run_at = %v, want about one hour from now", runAt)
+	}
+}
+
+func TestDashboardListFiltersByApplication(t *testing.T) {
+	ctx, _, admin := testServer(t, 0)
+	mine, _ := newApp(t, ctx, admin, "filter-mine")
+	other, _ := newApp(t, ctx, admin, "filter-other")
+	for _, app := range []string{mine, other} {
+		write(t, ctx, admin, map[string]any{"op": "calendar.set", "applicationId": app, "name": "workdays", "data": map[string]any{"timezone": "UTC", "weekdays": []int{1}}})
+		if got := read(t, ctx, admin); got["ok"] != true {
+			t.Fatalf("calendar: %#v", got)
+		}
+	}
+	write(t, ctx, admin, map[string]any{"op": "dashboard.list", "name": "calendars", "applicationId": mine})
+	got := read(t, ctx, admin)
+	rows, _ := got["data"].([]any)
+	if len(rows) != 1 || rows[0].(map[string]any)["application_id"] != mine {
+		t.Fatalf("filtered calendars: %#v", got)
+	}
+}
+
 func TestSignalAdvancesOnlyInstanceWithDerivedCorrelationKey(t *testing.T) {
 	ctx, h, admin := testServer(t, 0)
 	appID, token := newApp(t, ctx, admin, "correlation")

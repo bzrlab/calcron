@@ -196,7 +196,7 @@ func (m *Module) Throttle(ctx context.Context, app string, f protocol.Frame) pro
 		return fail(err.Error())
 	}
 	f.After = "0s"
-	if response := m.SetImmediateTx(ctx, tx, app, f); !response.OK {
+	if response := m.SetAfterTx(ctx, tx, app, f); !response.OK {
 		return response
 	}
 	response := ok(map[string]bool{"triggered": true})
@@ -209,13 +209,18 @@ func (m *Module) Throttle(ctx context.Context, app string, f protocol.Frame) pro
 	return response
 }
 
-func (m *Module) SetImmediateTx(ctx context.Context, tx pgx.Tx, app string, f protocol.Frame) protocol.Reply {
+// SetAfterTx creates or replaces a schedule due f.After from the transaction's now().
+func (m *Module) SetAfterTx(ctx context.Context, tx pgx.Tx, app string, f protocol.Frame) protocol.Reply {
+	delay, err := time.ParseDuration(f.After)
+	if err != nil {
+		return fail("invalid after")
+	}
 	payload := f.Data
 	if len(payload) == 0 {
 		payload = []byte(`{}`)
 	}
 	var scheduleID string
-	err := tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain) values($1,$2,$3,$4,$5,now(),'scheduled',$6) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, f.Chain).Scan(&scheduleID)
+	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain) values($1,$2,$3,$4,$5,now()+$7::interval,'scheduled',$6) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, f.Chain, delay.String()).Scan(&scheduleID)
 	if err != nil {
 		return fail(err.Error())
 	}

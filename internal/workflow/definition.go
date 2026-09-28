@@ -14,18 +14,18 @@ type Definition struct {
 	States  map[string]State `json:"states"`
 }
 type State struct {
-	Type        string          `json:"type"`
-	After       string          `json:"after"`
-	Event       string          `json:"event"`
-	Correlation string          `json:"correlationKey"`
-	CorrExpr    string          `json:"correlationKeyExpr"`
-	When        string          `json:"when"`
-	True        string          `json:"true"`
-	False       string          `json:"false"`
-	Next        string          `json:"next"`
-	Target      string          `json:"target"`
-	Data        json.RawMessage `json:"data"`
-	DataExpr    string          `json:"dataExpr"`
+	Type            string          `json:"type"`
+	After           string          `json:"after"`
+	Event           string          `json:"event"`
+	Correlation     string          `json:"correlationKey"`
+	CorrelationExpr string          `json:"correlationKeyExpr"`
+	When            string          `json:"when"`
+	True            string          `json:"true"`
+	False           string          `json:"false"`
+	Next            string          `json:"next"`
+	Target          string          `json:"target"`
+	Data            json.RawMessage `json:"data"`
+	DataExpr        string          `json:"dataExpr"`
 }
 
 func Parse(raw json.RawMessage) (Definition, error) {
@@ -47,11 +47,11 @@ func Parse(raw json.RawMessage) (Definition, error) {
 				return definition, errors.New("workflow target not found")
 			}
 		case "wait_signal":
-			if state.Event == "" || (state.Correlation == "") == (state.CorrExpr == "") || state.Next == "" {
+			if state.Event == "" || (state.Correlation == "") == (state.CorrelationExpr == "") || state.Next == "" {
 				return definition, errors.New("invalid wait_signal")
 			}
-			if state.CorrExpr != "" {
-				if _, err := CompileCEL(state.CorrExpr); err != nil {
+			if state.CorrelationExpr != "" {
+				if _, err := CompileCEL(state.CorrelationExpr); err != nil {
 					return definition, err
 				}
 			}
