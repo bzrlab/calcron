@@ -20,7 +20,7 @@ export function workflows(appId: string, standupWindow: string) {
       initial: "prompt",
       states: {
         prompt: emit("verify.prompt", "wait"),
-        wait: { type: "wait_signal", event: "member.verified", correlationKeyExpr: "'verify:' + input.guildId + ':' + input.userId", next: "decide" },
+        wait: { type: "wait_signal", event: "member.verified", correlationKeyExpr: "'verify:' + input.guildId + ':' + input.userId + ':' + input.joinedAt", next: "decide" },
         decide: { type: "branch", when: "state.signal.approved == true", true: "grant", false: "reject" },
         grant: emit("verify.grant", "done", "state.signal"),
         reject: emit("verify.reject", "done", "state.signal"),
@@ -40,8 +40,8 @@ export function workflows(appId: string, standupWindow: string) {
 }
 
 export async function loadCalendar(admin: Admin, appId: string) {
-  const rows = await admin.call<{ application_id: string; name: string; definition: Calendar }[]>("dashboard.list", { name: "calendars" });
-  return rows.find(row => row.application_id === appId && row.name === CALENDAR)?.definition;
+  const rows = await admin.call<{ name: string; definition: Calendar }[]>("dashboard.list", { name: "calendars", applicationId: appId });
+  return rows.find(row => row.name === CALENDAR)?.definition;
 }
 
 /** Publishes new workflow versions and upserts the calendar and start schedule. Holiday overrides survive re-provisioning. */

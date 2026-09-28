@@ -32,6 +32,7 @@ export async function textChannel(client: Client<true>, id: string) {
 }
 
 /** Deliveries are at least once: stamp the delivery ID on the post and skip it if a redelivery finds it already sent. */
+// ponytail: dedupe window is the last 50 messages; persist delivery IDs if a busy channel outruns it between retries.
 export async function postOnce(channel: GuildTextBasedChannel, deliveryId: string, embed: EmbedBuilder, extra: Omit<MessageCreateOptions, "embeds"> = {}) {
   const footer = `delivery ${deliveryId}`;
   const recent = await channel.messages.fetch({ limit: 50 });

@@ -4,6 +4,7 @@ import { calcron, isDuration, parseWhen, relative } from "../calcron.ts";
 import { onDelivery, postOnce, textChannel, type Feature } from "../discord.ts";
 
 const EMOJI = "🎉";
+const CANCELLED = "Cancelled by host.";
 const key = (messageId: string) => `giveaway:${messageId}`;
 const field = (message: Message, name: string) => message.embeds[0]?.fields.find(f => f.name === name)?.value;
 
@@ -89,12 +90,12 @@ export const giveaways: Feature = {
     if (!message || message.author.id !== i.client.user.id || !field(message, "Winners")) throw new Error("No giveaway with that message ID in this channel.");
     const ended = field(message, "Result");
     if (sub === "reroll") {
-      if (!ended) throw new Error("That giveaway has not ended yet.");
+      if (!ended || ended === CANCELLED) throw new Error("Only an ended giveaway can be rerolled.");
       const result = await draw(message, Number(field(message, "Winners")));
       await message.reply({ content: `${EMOJI} Reroll: ${result}`, allowedMentions: { parse: ["users"] } });
       return i.editReply("Rerolled.");
     }
-    if (ended) throw new Error("That giveaway already ended.");
+    if (ended) throw new Error(ended === CANCELLED ? "That giveaway was cancelled." : "That giveaway already ended.");
     if (sub === "extend") {
       const by = i.options.getString("by", true);
       if (!isDuration(by)) throw new Error("Use Go duration syntax such as `30m` or `2h`.");
@@ -104,7 +105,7 @@ export const giveaways: Feature = {
     }
     if (sub === "cancel") {
       await calcron.cancel(key(message.id), `${key(message.id)}:cancel:${i.id}`);
-      await restyle(message, "Cancelled.", 0x99aab5);
+      await message.edit({ embeds: [EmbedBuilder.from(message.embeds[0]).setColor(0x99aab5).setDescription("Cancelled.").addFields({ name: "Result", value: CANCELLED })] });
       return i.editReply("Giveaway cancelled.");
     }
     // Replacing the schedule with a zero delay draws now through the same durable delivery path.

@@ -42,11 +42,13 @@ test("bot workflows run end to end against Calcron", { skip: !url || !adminToken
   await bot.connect();
   t.after(() => bot.close());
 
-  const alice = { guildId: "g1", userId: "alice" };
-  const bob = { guildId: "g1", userId: "bob" };
+  const alice = { guildId: "g1", userId: "alice", joinedAt: "1" };
+  const bob = { guildId: "g1", userId: "bob", joinedAt: "1" };
+  const bobRejoined = { ...bob, joinedAt: "2" };
   await bot.start("member-verification", "alice:start", alice);
   await bot.start("member-verification", "bob:start", bob);
-  assert.deepEqual(new Set((await next("verify.prompt", 2)).map(d => d.userId)), new Set(["alice", "bob"]));
+  await bot.start("member-verification", "bob:rejoin:start", bobRejoined);
+  assert.deepEqual((await next("verify.prompt", 3)).map(d => `${d.userId}@${d.joinedAt}`).sort(), ["alice@1", "bob@1", "bob@2"]);
 
   const approved = await bot.signal("member.verified", verifyKey(bob), "bob:verdict", { ...bob, approved: true, by: "bob", reason: "accepted" });
   assert.equal(approved.matched, 1);
@@ -55,6 +57,9 @@ test("bot workflows run end to end against Calcron", { skip: !url || !adminToken
   const rejected = await bot.signal("member.verified", verifyKey(alice), "alice:verdict", { ...alice, approved: false, by: "calcron", reason: "timeout" });
   assert.equal(rejected.matched, 1);
   assert.equal((await next("verify.reject"))[0].userId, "alice");
+  const left = await bot.signal("member.verified", verifyKey(bobRejoined), "bob:left", { ...bobRejoined, approved: false, by: "discord", reason: "left" });
+  assert.equal(left.matched, 1);
+  assert.equal((await next("verify.reject", 2))[1].joinedAt, "2");
   assert.equal(inbox.get("verify.grant")!.length, 1);
 
   await bot.start("daily-standup", "standup:e2e", { channelId: "c1" });

@@ -34,8 +34,8 @@ export const reminders: Feature = {
   async button(i, [action, userId, reminderId, by]) {
     if (i.user.id !== userId) return i.reply({ content: "That reminder belongs to someone else.", flags: MessageFlags.Ephemeral });
     if (action === "cancel") {
-      await calcron.cancel(key(userId, reminderId), `remind:${reminderId}:cancel:${i.id}`);
-      return i.update({ content: "Reminder cancelled.", components: [] });
+      const { cancelled } = await calcron.cancel(key(userId, reminderId), `remind:${reminderId}:cancel:${i.id}`);
+      return i.update({ content: cancelled ? "Reminder cancelled." : "That reminder was already cancelled.", components: [] });
     }
     // Extending a delivered schedule reschedules it from now, which is exactly a snooze.
     const { runAt } = await calcron.extend(key(userId, reminderId), by, `remind:${reminderId}:snooze:${i.id}`);

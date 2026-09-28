@@ -42,6 +42,7 @@ export const tickets: Feature = {
       return close(i.channel, `closed by ${i.user}`, i.id);
     }
     if (i.channel?.type !== ChannelType.GuildText) throw new Error("Open tickets from a regular text channel.");
+    await i.deferReply({ flags: MessageFlags.Ephemeral });
     const modRole = env("MOD_ROLE_ID");
     const topic = i.options.getString("topic", true);
     const thread = await i.channel.threads.create({ name: `ticket-${i.user.username}`.slice(0, 100), type: ChannelType.PrivateThread, invitable: false });
@@ -54,7 +55,7 @@ export const tickets: Feature = {
       components: [row(button("ticket:close", "Close ticket", ButtonStyle.Danger))],
     });
     await touch(thread.id, `open:${i.id}`);
-    await i.reply({ content: `Ticket opened: ${thread}`, flags: MessageFlags.Ephemeral });
+    await i.editReply(`Ticket opened: ${thread}`);
   },
   async button(i) {
     if (!isTicket(i.channel, i.client)) return;

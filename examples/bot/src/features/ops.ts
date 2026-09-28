@@ -4,15 +4,13 @@ import { CALENDAR, loadCalendar } from "../provision.ts";
 import { button, row, type Feature } from "../discord.ts";
 
 type Stats = { scheduled: number; pending: number; blocked: number; workflows: number };
-type DeliveryRow = { id: string; application_id: string; event: string; status: string; attempts: number; created_at: string };
-type StartRow = { application_id: string; name: string; workflow_name: string; calendar_name: string; local_time: string; missed_policy: string; input: unknown; next_at: string };
+type DeliveryRow = { id: string; event: string; status: string; attempts: number; created_at: string };
+type StartRow = { name: string; workflow_name: string; calendar_name: string; local_time: string; missed_policy: string; input: unknown; next_at: string };
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ts = (iso: string, style = "F") => `<t:${Math.floor(new Date(iso).getTime() / 1000)}:${style}>`;
 
-async function startSchedules(admin: Admin, appId: string) {
-  return (await admin.call<StartRow[]>("dashboard.list", { name: "start_schedules" })).filter(s => s.application_id === appId);
-}
+const startSchedules = (admin: Admin, appId: string) => admin.call<StartRow[]>("dashboard.list", { name: "start_schedules", applicationId: appId });
 
 /** Overrides one date, then re-sets start schedules: a calendar edit alone leaves an already-computed next occurrence in place. */
 export async function overrideDate(admin: Admin, appId: string, date: string, status: "off" | "on" | "default") {
@@ -55,22 +53,18 @@ export const ops: Feature = {
     const sub = i.options.getSubcommand();
 
     if (sub === "stats") {
-      const [stats, apps] = await withAdmin(a => Promise.all([
-        a.call<Stats>("dashboard.stats"),
-        a.call<{ id: string; connected: boolean }[]>("dashboard.list", { name: "apps" }),
-      ]));
-      return i.editReply({ embeds: [new EmbedBuilder().setTitle("Calcron").setColor(stats.blocked ? 0xed4245 : 0x57f287).addFields(
+      const stats = await withAdmin(a => a.call<Stats>("dashboard.stats"));
+      return i.editReply({ embeds: [new EmbedBuilder().setTitle("Calcron (all applications)").setColor(stats.blocked ? 0xed4245 : 0x57f287).addFields(
         { name: "Scheduled", value: String(stats.scheduled), inline: true },
         { name: "Pending deliveries", value: String(stats.pending), inline: true },
         { name: "Blocked deliveries", value: String(stats.blocked), inline: true },
         { name: "Active workflows", value: String(stats.workflows), inline: true },
-        { name: "This bot", value: apps.find(a => a.id === appId)?.connected ? "🟢 connected" : "🔴 offline", inline: true },
       )] });
     }
 
     if (sub === "blocked") {
-      const blocked = (await withAdmin(a => a.call<DeliveryRow[]>("dashboard.list", { name: "deliveries" })))
-        .filter(d => d.application_id === appId && d.status === "blocked").slice(0, 5);
+      const blocked = (await withAdmin(a => a.call<DeliveryRow[]>("dashboard.list", { name: "deliveries", applicationId: appId })))
+        .filter(d => d.status === "blocked").slice(0, 5);
       if (!blocked.length) return i.editReply("No blocked deliveries. 🎉");
       return i.editReply({
         embeds: [new EmbedBuilder().setTitle("Blocked deliveries").setColor(0xed4245)

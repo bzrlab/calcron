@@ -1,7 +1,9 @@
 import { Calcron } from "@bzrlab/calcron";
 
 type Member = { guildId: string; userId: string };
-export type Verdict = Member & { approved: boolean; by: string; reason: string };
+/** One membership: a rejoin starts a new verification with its own correlation key. */
+export type Join = Member & { joinedAt: string };
+export type Verdict = Join & { approved: boolean; by: string; reason: string };
 
 export type Events = {
   "reminder.due": { reminderId: string; userId: string; channelId: string; text: string };
@@ -10,8 +12,8 @@ export type Events = {
   "temprole.expire": Member & { roleId: string };
   "staff.alert": Member & { channelId: string; reason: string };
   "giveaway.end": { channelId: string; messageId: string; prize: string; winners: number };
-  "verify.prompt": Member;
-  "verify.timeout": Member;
+  "verify.prompt": Join;
+  "verify.timeout": Join;
   "verify.grant": Verdict;
   "verify.reject": Verdict;
   "member.verified": Verdict;
@@ -19,7 +21,7 @@ export type Events = {
   "standup.close": { channelId: string };
 };
 export type Workflows = {
-  "member-verification": Member;
+  "member-verification": Join;
   "daily-standup": { channelId: string };
 };
 
@@ -29,9 +31,10 @@ export function env(name: string, fallback?: string): string {
   return value;
 }
 
-export const calcron = new Calcron<Events, Workflows>(env("CALCRON_URL", "wss://calcron.bzr.lt/ws"), process.env.CALCRON_TOKEN ?? "");
+const url = env("CALCRON_URL", "wss://calcron.bzr.lt/ws");
+export const calcron = new Calcron<Events, Workflows>(url, process.env.CALCRON_TOKEN ?? "");
 
-export const verifyKey = (m: Member) => `verify:${m.guildId}:${m.userId}`;
+export const verifyKey = (j: Join) => `verify:${j.guildId}:${j.userId}:${j.joinedAt}`;
 
 const DURATION = /^(\d+(\.\d+)?(ms|s|m|h))+$/;
 export const isDuration = (value: string) => DURATION.test(value);
@@ -61,8 +64,8 @@ export class Admin {
     ws.onmessage = e => { const reply: AdminReply = JSON.parse(String(e.data)); this.waiting.get(reply.id!)?.(reply); this.waiting.delete(reply.id!); };
     ws.onclose = () => { for (const done of this.waiting.values()) done({ error: "Calcron disconnected" }); this.waiting.clear(); };
   }
-  static async connect(url = env("CALCRON_URL", "wss://calcron.bzr.lt/ws"), token = env("CALCRON_ADMIN_TOKEN")) {
-    const ws = new WebSocket(url);
+  static async connect(to = url, token = env("CALCRON_ADMIN_TOKEN")) {
+    const ws = new WebSocket(to);
     await new Promise<void>((ok, bad) => { ws.onopen = () => ok(); ws.onerror = () => bad(new Error("Calcron connection failed")); });
     const admin = new Admin(ws);
     const auth = await admin.call<{ admin: boolean }>("auth", { token }).catch(error => { ws.close(); throw error; });
