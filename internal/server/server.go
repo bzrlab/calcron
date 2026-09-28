@@ -12,6 +12,7 @@ import (
 
 	"github.com/calcron/calcron/internal/application"
 	"github.com/calcron/calcron/internal/calendar"
+	"github.com/calcron/calcron/internal/delivery"
 	"github.com/calcron/calcron/internal/schedule"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -35,6 +36,7 @@ type Server struct {
 	applications   *application.Module
 	calendars      *calendar.Module
 	schedules      *schedule.Module
+	deliveryAdmin  *delivery.Admin
 }
 
 func New(ctx context.Context, c Config) (*Server, error) {
@@ -56,6 +58,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	s.applications = application.New(db, random)
 	s.calendars = calendar.New(db)
 	s.schedules = schedule.New(db, s.calendars, random, s.startWorkflow)
+	s.deliveryAdmin = delivery.NewAdmin(db)
 	go s.loop(ctx)
 	return s, nil
 }

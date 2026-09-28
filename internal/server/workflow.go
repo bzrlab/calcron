@@ -6,93 +6,18 @@ import (
 	"errors"
 	"time"
 
+	"github.com/calcron/calcron/internal/workflow"
 	"github.com/google/cel-go/cel"
 )
 
-type workflowDefinition struct {
-	Initial string                   `json:"initial"`
-	States  map[string]workflowState `json:"states"`
-}
-type workflowState struct {
-	Type        string          `json:"type"`
-	After       string          `json:"after"`
-	Event       string          `json:"event"`
-	Correlation string          `json:"correlationKey"`
-	When        string          `json:"when"`
-	True        string          `json:"true"`
-	False       string          `json:"false"`
-	Next        string          `json:"next"`
-	Target      string          `json:"target"`
-	Data        json.RawMessage `json:"data"`
-	DataExpr    string          `json:"dataExpr"`
-}
+type workflowDefinition = workflow.Definition
+type workflowState = workflow.State
 
 func parseWorkflow(raw json.RawMessage) (workflowDefinition, error) {
-	var d workflowDefinition
-	if json.Unmarshal(raw, &d) != nil || d.Initial == "" || d.States[d.Initial].Type == "" {
-		return d, errors.New("invalid workflow definition")
-	}
-	for name, s := range d.States {
-		if name == "" {
-			return d, errors.New("empty workflow state")
-		}
-		switch s.Type {
-		case "end":
-		case "wait_time":
-			if _, e := time.ParseDuration(s.After); e != nil || s.Next == "" {
-				return d, errors.New("invalid wait_time")
-			}
-			if _, ok := d.States[s.Next]; !ok {
-				return d, errors.New("workflow target not found")
-			}
-		case "wait_signal":
-			if s.Event == "" || s.Correlation == "" || s.Next == "" {
-				return d, errors.New("invalid wait_signal")
-			}
-			if _, ok := d.States[s.Next]; !ok {
-				return d, errors.New("workflow target not found")
-			}
-		case "branch":
-			if s.When == "" || s.True == "" || s.False == "" {
-				return d, errors.New("invalid branch")
-			}
-			if _, e := compileCEL(s.When); e != nil {
-				return d, e
-			}
-			if _, ok := d.States[s.True]; !ok {
-				return d, errors.New("workflow target not found")
-			}
-			if _, ok := d.States[s.False]; !ok {
-				return d, errors.New("workflow target not found")
-			}
-		case "emit":
-			if s.Target == "" || s.Event == "" || s.Next == "" {
-				return d, errors.New("invalid emit")
-			}
-			if s.DataExpr != "" {
-				if _, e := compileCEL(s.DataExpr); e != nil {
-					return d, e
-				}
-			}
-			if _, ok := d.States[s.Next]; !ok {
-				return d, errors.New("workflow target not found")
-			}
-		default:
-			return d, errors.New("unknown workflow state")
-		}
-	}
-	return d, nil
+	return workflow.Parse(raw)
 }
 func compileCEL(expr string) (cel.Program, error) {
-	env, e := cel.NewEnv(cel.Variable("input", cel.DynType), cel.Variable("state", cel.DynType))
-	if e != nil {
-		return nil, e
-	}
-	ast, iss := env.Compile(expr)
-	if iss.Err() != nil {
-		return nil, iss.Err()
-	}
-	return env.Program(ast)
+	return workflow.CompileCEL(expr)
 }
 func (s *Server) publishWorkflow(ctx context.Context, f frame) reply {
 	if f.ApplicationID == "" || f.Name == "" {
