@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  npm:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: sdk/node
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Check version matches tag
+        run: test "$(node -p 'require("./package.json").version')" = "${GITHUB_REF_NAME#v}"
+      - run: npm ci
+      - run: cp ../../LICENSE .
+      - name: Publish
+        run: |
+          name=$(node -p 'require("./package.json").name')
+          version=${GITHUB_REF_NAME#v}
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version already published"
+          else
+            npm publish
+          fi
+
+  go-proxy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache: false
+      - run: GOPROXY=https://proxy.golang.org go list -m "github.com/${GITHUB_REPOSITORY}@${GITHUB_REF_NAME}"
