@@ -1,12 +1,13 @@
 # Calcron
 
-Private durable scheduler. Requires PostgreSQL and `CALCRON_ADMIN_TOKEN`.
+Durable scheduler and workflow engine. Requires PostgreSQL and `CALCRON_ADMIN_TOKEN`.
 
 ```sh
-docker compose up --build
+cp .env.example .env   # fill in secrets
+docker compose up -d --build
 ```
 
-Open `http://localhost:8080` for the admin dashboard. Apps connect to `ws://localhost:8080/ws`.
+Compose serves Calcron through Traefik on the external `proxy` network. Open the host from the Traefik router rule for the admin dashboard. Apps connect to `wss://<host>/ws`.
 
 ## Application SDKs
 

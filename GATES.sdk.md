@@ -16,7 +16,7 @@ Scope: ship documented, package-ready Node and Go application SDKs with complete
 
 - [x] G2: Go SDK exercises its public protocol client
   CHECK: GOCACHE=/tmp/calcron-go-build go test ./sdk/go -count=1
-  EXPECT: github.com/calcron/calcron/sdk/go
+  EXPECT: github.com/bzrlab/calcron/sdk/go
   EVIDENCE: automatic-evidence=v1; definition-sha256=77052c0982e7386c0693a8775d39da994693ab0a7809718b2ad751e0039960e5; exit=0; EXPECT=matched; output-sha256=8bdb9ad44ea15ca5887c3bc7821221783f53ecfd9df67ba8366a8a07d9099ccf; output-bytes=46; shell=/bin/sh; cwd=/mnt/Development/Projects/calcron; path=e6f1e170844d/48 entries
 
 - [x] G3: SDK documentation covers installation, all application operations, durable delivery, idempotency, and both language examples
@@ -26,5 +26,5 @@ Scope: ship documented, package-ready Node and Go application SDKs with complete
 
 - [x] G4: SDK changes preserve the repository test suite
   CHECK: GOCACHE=/tmp/calcron-go-build go test ./... -count=1
-  EXPECT: github.com/calcron/calcron/sdk/go
+  EXPECT: github.com/bzrlab/calcron/sdk/go
   EVIDENCE: automatic-evidence=v1; definition-sha256=a299a5b4d14595d7431d7ae130ccd639793da992d8c421726cab9abbb2722111; exit=0; EXPECT=matched; output-sha256=d844160cc4f036dcdfde9e5dfd247d29d371372b72c171069d75631105185db3; output-bytes=209; shell=/bin/sh; cwd=/mnt/Development/Projects/calcron; path=e6f1e170844d/48 entries

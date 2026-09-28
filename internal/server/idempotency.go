@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/calcron/calcron/internal/idempotency"
+	"github.com/bzrlab/calcron/internal/idempotency"
 	"github.com/jackc/pgx/v5"
 )
 

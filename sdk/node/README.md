@@ -1,15 +1,15 @@
-# @calcron/node
+# @bzrlab/calcron
 
 Node 22+ and TypeScript client for a Calcron application. It authenticates over
 WebSocket, reconnects after a transport loss, correlates replies, and exposes
 durable delivery acknowledgements.
 
 ```sh
-npm install @calcron/node
+npm install @bzrlab/calcron
 ```
 
 ```ts
-import { Calcron } from "@calcron/node";
+import { Calcron } from "@bzrlab/calcron";
 
 type Events = { "invoice.due": { invoiceId: string } };
 const calcron = new Calcron<Events>(process.env.CALCRON_URL!, process.env.CALCRON_TOKEN!);
@@ -26,6 +26,6 @@ await calcron.set({
 });
 ```
 
-Read the [SDK guide](https://github.com/calcron/calcron/blob/main/docs/sdk.md)
+Read the [SDK guide](https://github.com/bzrlab/calcron/blob/main/docs/sdk.md)
 for typed event contracts, every operation, delivery and idempotency rules, and
 Go examples.

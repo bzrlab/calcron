@@ -3,7 +3,7 @@ package delivery
 
 import (
 	"context"
-	"github.com/calcron/calcron/internal/protocol"
+	"github.com/bzrlab/calcron/internal/protocol"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

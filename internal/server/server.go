@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/calcron/calcron/internal/application"
-	"github.com/calcron/calcron/internal/calendar"
-	"github.com/calcron/calcron/internal/delivery"
-	"github.com/calcron/calcron/internal/schedule"
+	"github.com/bzrlab/calcron/internal/application"
+	"github.com/bzrlab/calcron/internal/calendar"
+	"github.com/bzrlab/calcron/internal/delivery"
+	"github.com/bzrlab/calcron/internal/schedule"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

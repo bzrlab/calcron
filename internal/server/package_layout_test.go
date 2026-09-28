@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/calcron/calcron/internal/protocol"
+	"github.com/bzrlab/calcron/internal/protocol"
 )
 
 // The composition root should depend on domain modules through their public

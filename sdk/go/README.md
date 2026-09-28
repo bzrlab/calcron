@@ -1,6 +1,6 @@
 # Calcron Go SDK
 
-Import `github.com/calcron/calcron/sdk/go` (its package name is `cron`) to
+Import `github.com/bzrlab/calcron/sdk/go` (its package name is `cron`) to
 connect a Go application to Calcron. The client authenticates over WebSocket,
 reconnects after a transport loss, correlates replies, and exposes durable
 delivery acknowledgements.
@@ -18,5 +18,5 @@ cron.OnTyped(client, InvoiceDueEvent, func(event cron.TypedDelivery[InvoiceDue])
 })
 ```
 
-Read the [SDK guide](https://github.com/calcron/calcron/blob/main/docs/sdk.md)
+Read the [SDK guide](https://github.com/bzrlab/calcron/blob/main/docs/sdk.md)
 for every operation, delivery and idempotency rules, and the complete example.

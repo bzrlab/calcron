@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 
-	"github.com/calcron/calcron/internal/dashboard"
-	"github.com/calcron/calcron/internal/protocol"
+	"github.com/bzrlab/calcron/internal/dashboard"
+	"github.com/bzrlab/calcron/internal/protocol"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

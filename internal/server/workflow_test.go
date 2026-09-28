@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	calcron "github.com/calcron/calcron"
+	calcron "github.com/bzrlab/calcron"
 )
 
 func TestParseWorkflowRejectsMissingTransitionTarget(t *testing.T) {

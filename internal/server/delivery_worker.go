@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/calcron/calcron/internal/schedule"
+	"github.com/bzrlab/calcron/internal/schedule"
 	"github.com/jackc/pgx/v5"
 )
 

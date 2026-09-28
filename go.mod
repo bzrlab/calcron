@@ -1,4 +1,4 @@
-module github.com/calcron/calcron
+module github.com/bzrlab/calcron
 
 go 1.25.1
 

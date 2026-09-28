@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/calcron/calcron/internal/calendar"
-	"github.com/calcron/calcron/internal/protocol"
+	"github.com/bzrlab/calcron/internal/calendar"
+	"github.com/bzrlab/calcron/internal/protocol"
 )
 
 func (m *Module) SetStart(ctx context.Context, f protocol.Frame) protocol.Reply {

@@ -1,6 +1,6 @@
 package server
 
-import "github.com/calcron/calcron/internal/protocol"
+import "github.com/bzrlab/calcron/internal/protocol"
 
 // Aliases preserve the internal server test surface while protocol is the
 // dependency-safe seam for domain modules.

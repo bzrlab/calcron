@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/calcron/calcron/internal/server"
+	"github.com/bzrlab/calcron/internal/server"
 )
 
 // The embedded dashboard must be served at / with a real HTML document and

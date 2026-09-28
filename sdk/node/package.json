@@ -1,7 +1,14 @@
 {
-  "name": "@calcron/node",
+  "name": "@bzrlab/calcron",
   "version": "0.1.0",
   "description": "Node.js and TypeScript client for Calcron",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bzrlab/calcron.git",
+    "directory": "sdk/node"
+  },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "exports": {
     ".": {

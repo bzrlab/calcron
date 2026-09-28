@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/calcron/calcron"
-	"github.com/calcron/calcron/internal/server"
+	"github.com/bzrlab/calcron"
+	"github.com/bzrlab/calcron/internal/server"
 	"github.com/coder/websocket"
 )
 

@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"github.com/calcron/calcron/internal/protocol"
+	"github.com/bzrlab/calcron/internal/protocol"
 )
 
 func (s *Server) dashboardStats(ctx context.Context) reply { return s.deliveryAdmin.Stats(ctx) }

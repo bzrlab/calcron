@@ -6,9 +6,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/calcron/calcron/internal/calendar"
-	"github.com/calcron/calcron/internal/idempotency"
-	"github.com/calcron/calcron/internal/protocol"
+	"github.com/bzrlab/calcron/internal/calendar"
+	"github.com/bzrlab/calcron/internal/idempotency"
+	"github.com/bzrlab/calcron/internal/protocol"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

@@ -6,7 +6,7 @@ Set `CALCRON_URL` to the WebSocket URL (for example, `ws://calcron.internal:8080
 
 ## Install and connect
 
-Publish the Node package to your private registry, then install it with `npm install @calcron/node`. Go applications import `github.com/calcron/calcron/sdk/go` (package name `cron`).
+Install the Node package with `npm install @bzrlab/calcron`. Go applications import `github.com/bzrlab/calcron/sdk/go` (package name `cron`).
 
 The SDK authenticates during `connect` / `Connect`. A failed authentication returns an error; reconnect attempts use exponential backoff up to ten seconds. `close` / `Close` stops reconnecting. A request in flight when a connection is lost fails, so retry it with the **same idempotency key**.
 
@@ -47,7 +47,7 @@ unknown event name, a wrong payload, a missing required payload, and a workflow
 started with the wrong input before code runs.
 
 ```ts
-import { Calcron } from "@calcron/node";
+import { Calcron } from "@bzrlab/calcron";
 
 type Events = {
   "invoice.due": { invoiceId: string; amount: number };
@@ -107,7 +107,7 @@ Use one stable, application-generated key for one intended state change:
 ## Node / TypeScript example
 
 ```ts
-import { Calcron } from "@calcron/node";
+import { Calcron } from "@bzrlab/calcron";
 
 type Events = {
   "invoice.due": { invoiceId: number };
