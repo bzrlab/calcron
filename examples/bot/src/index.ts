@@ -20,8 +20,18 @@ client.once(Events.ClientReady, async ready => {
   for (const feature of features) feature.start?.(ready);
   const commands = features.flatMap(f => f.commands).map(c => ({ ...c, contexts: [InteractionContextType.Guild] }));
   const guildId = process.env.DISCORD_GUILD_ID;
-  await (guildId ? ready.guilds.cache.get(guildId)?.commands.set(commands) : ready.application.commands.set(commands));
-  await calcron.connect();
+  try {
+    if (guildId) {
+      const guild = ready.guilds.cache.get(guildId);
+      if (!guild) throw new Error(`Bot is not in DISCORD_GUILD_ID guild ${guildId}`);
+      await guild.commands.set(commands);
+    } else await ready.application.commands.set(commands);
+    await calcron.connect();
+  } catch (error) {
+    console.error("Startup failed:", error instanceof Error ? error.message : error);
+    await client.destroy();
+    process.exit(1);
+  }
   console.log(`${ready.user.tag} ready: ${commands.length} commands, Calcron connected`);
 });
 

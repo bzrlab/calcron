@@ -20,8 +20,9 @@ test("bot workflows run end to end against Calcron", { skip: !url || !adminToken
   // Holiday overrides added from Discord survive re-provisioning.
   const calendar = (await loadCalendar(admin, app.applicationId))!;
   await admin.call("calendar.set", { applicationId: app.applicationId, name: CALENDAR, data: { ...calendar, overrides: { "2026-12-16": false } } });
-  const second = await provision(admin, options);
-  assert.equal(second.versions["member-verification"], 2);
+  // Unchanged definitions are not re-published; a changed one gets a new version.
+  const second = await provision(admin, { ...options, standupWindow: "2s" });
+  assert.deepEqual(second.versions, { "member-verification": 1, "daily-standup": 2 });
   assert.deepEqual((await loadCalendar(admin, app.applicationId))?.overrides, { "2026-12-16": false });
 
   // Declaring the next standup day a holiday moves the start schedule past it; clearing restores it.
@@ -62,7 +63,8 @@ test("bot workflows run end to end against Calcron", { skip: !url || !adminToken
   assert.equal((await next("verify.reject", 2))[1].joinedAt, "2");
   assert.equal(inbox.get("verify.grant")!.length, 1);
 
-  await bot.start("daily-standup", "standup:e2e", { channelId: "c1" });
-  assert.deepEqual(await next("standup.open"), [{ channelId: "c1" }]);
-  assert.deepEqual(await next("standup.close"), [{ channelId: "c1" }]);
+  const adHoc = { channelId: "c1", name: "Ad-hoc standup · e2e" };
+  await bot.start("daily-standup", "standup:e2e", adHoc);
+  assert.deepEqual(await next("standup.open"), [adHoc]);
+  assert.deepEqual(await next("standup.close"), [adHoc]);
 });

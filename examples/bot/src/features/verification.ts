@@ -41,7 +41,7 @@ export const verification: Feature = {
     });
     client.on("guildMemberRemove", async m => {
       const join = joinOf(m);
-      if (!join) return;
+      if (!join || m.roles.cache.has(env("VERIFIED_ROLE_ID"))) return;
       try {
         await calcron.cancel(`${verifyKey(join)}:timeout`, `${verifyKey(join)}:left:cancel`);
         await calcron.signal("member.verified", verifyKey(join), `${verifyKey(join)}:left`, { ...join, approved: false, by: "discord", reason: "Left before verifying." });

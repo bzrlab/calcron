@@ -38,6 +38,8 @@ export const tempRoles: Feature = {
     const duration = i.options.getString(sub === "add" ? "duration" : "by", true);
     if (!isDuration(duration)) throw new Error("Use Go duration syntax such as `30m`, `12h` or `168h`.");
     if (sub === "extend") {
+      const member = await i.guild.members.fetch(user.id).catch(() => null);
+      if (!member?.roles.cache.has(role.id)) throw new Error(`${user} does not have ${role}.`);
       const { runAt } = await calcron.extend(key, duration, `${key}:extend:${i.id}`).catch((error: Error) => {
         throw error.message === "schedule not found" ? new Error(`${user} has no temporary ${role}.`) : error;
       });

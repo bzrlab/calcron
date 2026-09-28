@@ -44,12 +44,21 @@ export async function loadCalendar(admin: Admin, appId: string) {
   return rows.find(row => row.name === CALENDAR)?.definition;
 }
 
-/** Publishes new workflow versions and upserts the calendar and start schedule. Holiday overrides survive re-provisioning. */
+/** Drops empty fields and sorts keys, so a stored definition compares equal to the one that produced it. */
+const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).filter(([, v]) => v !== "" && v != null).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, canonical(v)]))
+  : value;
+const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
+/** Publishes changed workflow definitions and upserts the calendar and start schedule. Holiday overrides survive re-provisioning. */
 export async function provision(admin: Admin, o: ProvisionOptions) {
   if (!isDuration(o.standupWindow)) throw new Error("STANDUP_WINDOW must be a Go duration");
+  const latest = await admin.call<{ name: string; version: number; definition: unknown }[]>("dashboard.list", { name: "workflow_versions", applicationId: o.appId });
   const versions: Record<string, number> = {};
   for (const [name, data] of Object.entries(workflows(o.appId, o.standupWindow))) {
-    versions[name] = (await admin.call<{ version: number }>("workflow.publish", { applicationId: o.appId, name, data })).version;
+    const current = latest.find(row => row.name === name);
+    versions[name] = current && same(current.definition, data) ? current.version
+      : (await admin.call<{ version: number }>("workflow.publish", { applicationId: o.appId, name, data })).version;
   }
   const overrides = (await loadCalendar(admin, o.appId))?.overrides ?? {};
   await admin.call("calendar.set", { applicationId: o.appId, name: CALENDAR, data: { timezone: o.timezone, weekdays: o.weekdays, overrides } });

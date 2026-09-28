@@ -11,6 +11,8 @@ test("parseWhen maps durations to after and dates to UTC at", () => {
   assert.deepEqual(parseWhen(String(now / 1000 + 3600), now), { at: "2026-09-28T01:00:00Z" });
   assert.throws(() => parseWhen("2026-09-27T00:00:00Z", now), /past/);
   assert.throws(() => parseWhen("7d", now), /duration/);
+  assert.throws(() => parseWhen("2026-10-01T09:00", now), /timezone/);
+  assert.throws(() => parseWhen("2027", now), /timezone/);
 });
 
 test("pickWinners draws distinct entrants and never more than entered", () => {

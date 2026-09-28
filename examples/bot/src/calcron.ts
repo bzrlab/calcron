@@ -17,12 +17,14 @@ export type Events = {
   "verify.grant": Verdict;
   "verify.reject": Verdict;
   "member.verified": Verdict;
-  "standup.open": { channelId: string };
-  "standup.close": { channelId: string };
+  "standup.open": Standup;
+  "standup.close": Standup;
 };
+/** `name` is set for ad-hoc standups so their close only archives their own thread. */
+export type Standup = { channelId: string; name?: string };
 export type Workflows = {
   "member-verification": Join;
-  "daily-standup": { channelId: string };
+  "daily-standup": Standup;
 };
 
 export function env(name: string, fallback?: string): string {
@@ -43,14 +45,15 @@ export const isDuration = (value: string) => DURATION.test(value);
 export function parseWhen(input: string, now = Date.now()): { after: string } | { at: string } {
   const value = input.trim().replace(/\s+/g, "");
   if (isDuration(value)) return { after: value };
-  const at = new Date(/^\d+$/.test(value) ? Number(value) * 1000 : input.trim());
-  if (Number.isNaN(at.getTime())) throw new Error("Use a duration like `10m`, `2h30m` or a date like `2026-10-01T09:00+06:00`.");
+  const unix = /^\d{10,}$/.test(value);
+  const at = new Date(unix ? Number(value) * 1000 : /(Z|[+-]\d\d:?\d\d)$/i.test(value) ? input.trim() : NaN);
+  if (Number.isNaN(at.getTime())) throw new Error("Use a duration like `10m`, `2h30m`, a unix timestamp, or a date with a timezone like `2026-10-01T09:00+06:00`.");
   if (at.getTime() <= now) throw new Error("That time is in the past.");
   return { at: at.toISOString().replace(/\.\d{3}Z$/, "Z") };
 }
 
 /** Discord relative timestamp for a Calcron `runAt`. */
-export const relative = (runAt: string) => `<t:${Math.floor(new Date(runAt).getTime() / 1000)}:R>`;
+export const relative = (runAt: string | Date) => `<t:${Math.floor(new Date(runAt).getTime() / 1000)}:R>`;
 
 type AdminReply = { id?: string; ok?: boolean; data?: unknown; error?: string };
 
@@ -75,7 +78,8 @@ export class Admin {
   call<T>(op: string, body: Record<string, unknown> = {}) {
     const id = String(++this.n);
     return new Promise<T>((resolve, reject) => {
-      this.waiting.set(id, reply => reply.ok ? resolve(reply.data as T) : reject(new Error(reply.error ?? `${op} failed`)));
+      const timer = setTimeout(() => { this.waiting.delete(id); reject(new Error(`${op} timed out`)); }, 10_000);
+      this.waiting.set(id, reply => { clearTimeout(timer); reply.ok ? resolve(reply.data as T) : reject(new Error(reply.error ?? `${op} failed`)); });
       this.ws.send(JSON.stringify({ id, op, ...body }));
     });
   }

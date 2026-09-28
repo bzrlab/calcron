@@ -7,8 +7,13 @@ const grace = () => env("TICKET_GRACE", "1h");
 const isTicket = (channel: Channel | null, client: Client<true>): channel is AnyThreadChannel =>
   channel?.type === ChannelType.PrivateThread && channel.ownerId === client.user.id;
 
-/** Any human message replaces the idle deadline and cancels a pending close. */
+// ponytail: per-process throttle; a restart just costs one extra touch per thread.
+const touched = new Map<string, number>();
+
+/** Any human message replaces the idle deadline and cancels a pending close, at most once a minute per thread. */
 async function touch(threadId: string, intent: string) {
+  if (Date.now() - (touched.get(threadId) ?? 0) < 60_000) return;
+  touched.set(threadId, Date.now());
   await calcron.set({
     key: `ticket:${threadId}:idle`, event: "ticket.idle", after: idle(), data: { threadId },
     chain: { key: `ticket:${threadId}:close`, event: "ticket.close", after: grace(), data: { threadId } },
@@ -18,6 +23,7 @@ async function touch(threadId: string, intent: string) {
 }
 
 async function close(thread: AnyThreadChannel, reason: string, intent: string) {
+  touched.delete(thread.id);
   await calcron.cancel(`ticket:${thread.id}:idle`, `ticket:${thread.id}:close-idle:${intent}`);
   await calcron.cancel(`ticket:${thread.id}:close`, `ticket:${thread.id}:close-close:${intent}`);
   if (thread.archived) return;

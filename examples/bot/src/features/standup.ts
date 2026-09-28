@@ -19,23 +19,25 @@ export const standup: Feature = {
   ],
   async command(i) {
     if (i.channel?.type !== ChannelType.GuildText) throw new Error("Run this in a text channel.");
-    const { instanceId } = await calcron.start("daily-standup", `standup:manual:${i.id}`, { channelId: i.channelId });
+    const name = `Ad-hoc standup · ${new Date().toLocaleString("en-CA", { timeZone: env("CALENDAR_TIMEZONE", "Asia/Dhaka"), dateStyle: "short", timeStyle: "short", hourCycle: "h23" })}`;
+    const { instanceId } = await calcron.start("daily-standup", `standup:manual:${i.id}`, { channelId: i.channelId, name });
     await i.reply({ content: `Standup workflow started (\`${instanceId}\`).`, flags: MessageFlags.Ephemeral });
   },
   start(client) {
-    onDelivery("standup.open", async ({ channelId }) => {
+    onDelivery("standup.open", async ({ channelId, name: adHoc }) => {
       const channel = await standupChannel(client, channelId);
-      const name = PREFIX + new Date().toLocaleDateString("en-CA", { timeZone: env("CALENDAR_TIMEZONE", "Asia/Dhaka") });
+      const name = adHoc ?? PREFIX + new Date().toLocaleDateString("en-CA", { timeZone: env("CALENDAR_TIMEZONE", "Asia/Dhaka") });
       const { threads } = await channel.threads.fetchActive();
       if (threads.some(t => t.parentId === channel.id && t.name === name)) return;
       const post = await channel.send({ embeds: [new EmbedBuilder().setTitle("🗓️ Daily standup").setColor(0x5865f2)
         .setDescription("Reply in the thread with **Yesterday**, **Today** and **Blockers**. It closes automatically.")] });
       await post.startThread({ name, autoArchiveDuration: ThreadAutoArchiveDuration.OneDay });
     });
-    onDelivery("standup.close", async ({ channelId }) => {
+    onDelivery("standup.close", async ({ channelId, name }) => {
       const channel = await standupChannel(client, channelId);
       const { threads } = await channel.threads.fetchActive();
-      for (const thread of threads.filter(t => t.parentId === channel.id && t.ownerId === client.user.id && t.name.startsWith(PREFIX)).values()) {
+      const ours = (title: string) => name ? title === name : title.startsWith(PREFIX);
+      for (const thread of threads.filter(t => t.parentId === channel.id && t.ownerId === client.user.id && ours(t.name)).values()) {
         const authors = [...new Set((await thread.messages.fetch({ limit: 100 })).filter(m => !m.author.bot).map(m => m.author.id))];
         await thread.send({ embeds: [new EmbedBuilder().setTitle("Standup closed").setColor(0x99aab5)
           .setDescription(authors.length ? `${authors.length} update(s) from ${authors.map(id => `<@${id}>`).join(", ")}.` : "No updates today.")] });

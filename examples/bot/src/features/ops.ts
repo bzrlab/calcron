@@ -63,8 +63,7 @@ export const ops: Feature = {
     }
 
     if (sub === "blocked") {
-      const blocked = (await withAdmin(a => a.call<DeliveryRow[]>("dashboard.list", { name: "deliveries", applicationId: appId })))
-        .filter(d => d.status === "blocked").slice(0, 5);
+      const blocked = (await withAdmin(a => a.call<DeliveryRow[]>("dashboard.list", { name: "deliveries", applicationId: appId, status: "blocked" }))).slice(0, 5);
       if (!blocked.length) return i.editReply("No blocked deliveries. 🎉");
       return i.editReply({
         embeds: [new EmbedBuilder().setTitle("Blocked deliveries").setColor(0xed4245)

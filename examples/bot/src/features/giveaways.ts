@@ -121,10 +121,14 @@ export const giveaways: Feature = {
       const channel = await textChannel(client, channelId);
       const message = await channel?.messages.fetch(messageId).catch(() => null);
       if (!channel || !message?.embeds[0]) return;
+      // The footer names the delivery that drew, so only its redelivery re-announces; cancelled or already-drawn giveaways stay quiet.
+      const drawnBy = `drawn ${deliveryId}`;
       let result = field(message, "Result");
+      if (result && message.embeds[0].footer?.text !== drawnBy) return;
       if (!result) {
         result = await draw(message, winners);
-        await message.edit({ embeds: [EmbedBuilder.from(message.embeds[0]).setColor(0x99aab5).setDescription(`Ended ${relative(new Date().toISOString())}`).addFields({ name: "Result", value: result })] });
+        await message.edit({ embeds: [EmbedBuilder.from(message.embeds[0]).setColor(0x99aab5).setDescription(`Ended ${relative(new Date())}`)
+          .addFields({ name: "Result", value: result }).setFooter({ text: drawnBy })] });
       }
       await postOnce(channel, deliveryId, new EmbedBuilder().setDescription(`${EMOJI} **${prize}** has ended. [Jump](${message.url})`), {
         content: result, allowedMentions: { parse: ["users"] },
