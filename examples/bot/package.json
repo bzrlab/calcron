@@ -1,0 +1,20 @@
+{
+  "name": "calcron-discord-bot",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.ts",
+    "provision": "node --env-file-if-exists=.env src/provision.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@bzrlab/calcron": "^0.1.0",
+    "discord.js": "^14.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  }
+}

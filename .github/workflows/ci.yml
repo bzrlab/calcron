@@ -46,6 +46,8 @@ jobs:
       - run: npm test
         working-directory: sdk/node
       - run: node scripts/check-sdk-docs.mjs
+      - run: npm ci && npm test
+        working-directory: examples/bot
       - run: npm ci
         working-directory: web
       - run: npm test && npm run build
