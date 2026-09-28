@@ -175,7 +175,26 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 				delete(state, "_signalState")
 				next = st.Next
 			} else {
-				_, e = tx.Exec(ctx, `update workflow_instances set status='waiting_signal',waiting_event=$2,correlation_key=$3,updated_at=now() where id=$1`, id, st.Event, st.Correlation)
+				key := st.Correlation
+				if st.CorrExpr != "" {
+					p, ce := compileCEL(st.CorrExpr)
+					if ce != nil {
+						e = ce
+						break
+					}
+					out, _, ce := p.Eval(map[string]any{"input": in, "state": state})
+					if ce != nil {
+						e = ce
+						break
+					}
+					k, good := out.Value().(string)
+					if !good || k == "" {
+						e = errors.New("CEL correlationKeyExpr must return a non-empty string")
+						break
+					}
+					key = k
+				}
+				_, e = tx.Exec(ctx, `update workflow_instances set status='waiting_signal',waiting_event=$2,correlation_key=$3,updated_at=now() where id=$1`, id, st.Event, key)
 				stop = true
 			}
 		case "branch":

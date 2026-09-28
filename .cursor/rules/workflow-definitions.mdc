@@ -16,7 +16,7 @@ Calcron runs versioned declarative finite-state machines (ADR-0006, ADR-0014). N
 V1 state types: `wait_time`, `wait_signal`, `branch`, `emit`, `end`. Loops are explicit transitions.
 
 - `wait_time` — `after` duration + `next`.
-- `wait_signal` — `event` + `correlationKey` + `next`. Correlation is explicit (ADR-0009); never infer from payload.
+- `wait_signal` — `event` + exactly one of `correlationKey` (literal) or `correlationKeyExpr` (CEL → non-empty string) + `next`. Correlation is explicit (ADR-0009); never infer from payload.
 - `branch` — read-only CEL `when` + `true`/`false` targets.
 - `emit` — `target` application + `event` + optional `dataExpr` + `next`.
 - `end` — terminal.

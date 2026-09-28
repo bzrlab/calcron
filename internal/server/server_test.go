@@ -139,6 +139,49 @@ func TestWorkflowWaitsForCorrelatedSignal(t *testing.T) {
 	}
 }
 
+func TestSignalAdvancesOnlyInstanceWithDerivedCorrelationKey(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "correlation")
+	definition := map[string]any{"initial": "wait", "states": map[string]any{
+		"wait": map[string]any{"type": "wait_signal", "event": "ticket.resolved", "correlationKeyExpr": "'ticket:' + input.ticketId", "next": "emit"},
+		"emit": map[string]any{"type": "emit", "target": appID, "event": "ticket.closed", "dataExpr": "input", "next": "end"},
+		"end":  map[string]any{"type": "end"},
+	}}
+	write(t, ctx, admin, map[string]any{"op": "workflow.publish", "applicationId": appID, "name": "ticket", "data": definition})
+	if got := read(t, ctx, admin); got["ok"] != true {
+		t.Fatalf("publish: %#v", got)
+	}
+	app := dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+	for _, id := range []string{"1", "2"} {
+		write(t, ctx, app, map[string]any{"op": "workflow.start", "name": "ticket", "data": map[string]string{"ticketId": id}, "idempotencyKey": "start-" + id})
+		if got := read(t, ctx, app); got["ok"] != true {
+			t.Fatalf("start %s: %#v", id, got)
+		}
+	}
+	write(t, ctx, app, map[string]any{"op": "signal", "event": "ticket.resolved", "correlationKey": "ticket:2", "idempotencyKey": "resolve-2"})
+	if got := read(t, ctx, app); got["ok"] != true || got["data"].(map[string]any)["matched"] != float64(1) {
+		t.Fatalf("signal: %#v", got)
+	}
+	if got := delivery(t, ctx, app); got["event"] != "ticket.closed" || got["data"].(map[string]any)["ticketId"] != "2" {
+		t.Fatalf("delivery: %#v", got)
+	}
+}
+
+func TestWorkflowPublishRejectsInvalidCorrelationKeyExpr(t *testing.T) {
+	ctx, _, admin := testServer(t, 0)
+	appID, _ := newApp(t, ctx, admin, "correlation-invalid")
+	for _, wait := range []map[string]any{
+		{"type": "wait_signal", "event": "e", "correlationKeyExpr": "input.id +", "next": "end"},
+		{"type": "wait_signal", "event": "e", "correlationKey": "k", "correlationKeyExpr": "input.id", "next": "end"},
+	} {
+		write(t, ctx, admin, map[string]any{"op": "workflow.publish", "applicationId": appID, "name": "bad", "data": map[string]any{"initial": "wait", "states": map[string]any{"wait": wait, "end": map[string]any{"type": "end"}}}})
+		if got := read(t, ctx, admin); got["ok"] == true {
+			t.Fatalf("accepted %#v", wait)
+		}
+	}
+}
+
 func TestScheduleIdempotencyReturnsOriginalResult(t *testing.T) {
 	ctx, h, admin := testServer(t, 0)
 	_, token := newApp(t, ctx, admin, "idempotency")
