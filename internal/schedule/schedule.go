@@ -146,10 +146,14 @@ func (m *Module) Extend(ctx context.Context, app string, f protocol.Frame) proto
 		return fail(err.Error())
 	}
 	defer tx.Rollback(ctx)
+	var scheduleID string
 	var runAt time.Time
-	err = tx.QueryRow(ctx, `update schedules set run_at=greatest(run_at,now())+$3::interval,status='scheduled',updated_at=now() where application_id=$1 and schedule_key=$2 and status!='cancelled' returning run_at`, app, f.Key, duration.String()).Scan(&runAt)
+	err = tx.QueryRow(ctx, `update schedules set run_at=greatest(run_at,now())+$3::interval,status='scheduled',updated_at=now() where application_id=$1 and schedule_key=$2 and status!='cancelled' returning id,run_at`, app, f.Key, duration.String()).Scan(&scheduleID, &runAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fail("schedule not found")
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `update deliveries set status='cancelled' where schedule_id=$1 and status='pending'`, scheduleID)
 	}
 	if err != nil {
 		return fail(err.Error())

@@ -154,8 +154,8 @@ func TestChainWaitsItsDelayAfterAcknowledgement(t *testing.T) {
 		t.Fatalf("ack: %#v", got)
 	}
 	var runAt time.Time
-	for _, row := range dashboardRows(t, ctx, admin, "schedules") {
-		if row["application_id"] == appID && row["schedule_key"] == "ticket:9:close" {
+	for _, row := range listRows(t, ctx, admin, map[string]any{"name": "schedules", "applicationId": appID}) {
+		if row["schedule_key"] == "ticket:9:close" {
 			runAt, _ = time.Parse(time.RFC3339Nano, row["run_at"].(string))
 		}
 	}
@@ -194,6 +194,10 @@ func TestSignalAdvancesOnlyInstanceWithDerivedCorrelationKey(t *testing.T) {
 	if got := read(t, ctx, admin); got["ok"] != true {
 		t.Fatalf("publish: %#v", got)
 	}
+	versions := listRows(t, ctx, admin, map[string]any{"name": "workflow_versions", "applicationId": appID})
+	if len(versions) != 1 || versions[0]["definition"] == nil {
+		t.Fatalf("workflow version row lacks definition: %#v", versions)
+	}
 	app := dial(t, ctx, h.URL, token)
 	defer app.CloseNow()
 	for _, id := range []string{"1", "2"} {
@@ -222,6 +226,59 @@ func TestWorkflowPublishRejectsInvalidCorrelationKeyExpr(t *testing.T) {
 		if got := read(t, ctx, admin); got["ok"] == true {
 			t.Fatalf("accepted %#v", wait)
 		}
+	}
+}
+
+func TestExtendCancelsDeliveryQueuedForOldDeadline(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "extend-pending")
+	app := dial(t, ctx, h.URL, token)
+	write(t, ctx, app, map[string]any{"op": "schedule.set", "idempotencyKey": "set", "key": "giveaway:1", "event": "giveaway.end", "after": "1ms"})
+	if got := read(t, ctx, app); got["ok"] != true {
+		t.Fatalf("set: %#v", got)
+	}
+	app.CloseNow()
+	time.Sleep(600 * time.Millisecond)
+	queued := listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID, "status": "pending"})
+	if len(queued) != 1 {
+		t.Fatalf("queued deliveries: %#v", queued)
+	}
+	app = dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+	write(t, ctx, app, map[string]any{"op": "schedule.extend", "idempotencyKey": "extend", "key": "giveaway:1", "by": "1h"})
+	got := read(t, ctx, app)
+	for got["op"] == "delivery" {
+		got = read(t, ctx, app)
+	}
+	if got["ok"] != true {
+		t.Fatalf("extend: %#v", got)
+	}
+	if got := listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID, "status": "cancelled"}); len(got) != 1 || got[0]["id"] != queued[0]["id"] || got[0]["status"] != "cancelled" {
+		t.Fatalf("stale delivery not cancelled: %#v", got)
+	}
+}
+
+func TestWorkflowFailsVisiblyWhenConditionErrors(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "cel-fault")
+	publish(t, ctx, admin, appID, "fault", map[string]any{"initial": "wait", "states": map[string]any{
+		"wait": map[string]any{"type": "wait_signal", "event": "e", "correlationKeyExpr": "'k:' + input.missing", "next": "end"},
+		"end":  map[string]any{"type": "end"},
+	}})
+	app := dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+	write(t, ctx, app, map[string]any{"op": "workflow.start", "name": "fault", "idempotencyKey": "start"})
+	started := read(t, ctx, app)
+	if started["ok"] != true {
+		t.Fatalf("start: %#v", started)
+	}
+	id := started["data"].(map[string]any)["instanceId"]
+	if rows := listRows(t, ctx, admin, map[string]any{"name": "workflows", "applicationId": appID}); len(rows) != 1 || rows[0]["status"] != "failed" {
+		t.Fatalf("instance not failed: %#v", rows)
+	}
+	history := listRows(t, ctx, admin, map[string]any{"name": "history", "subjectType": "workflow", "subjectId": id})
+	if len(history) == 0 || history[0]["event"] != "failed" || history[0]["data"].(map[string]any)["error"] == "" {
+		t.Fatalf("failure not recorded: %#v", history)
 	}
 }
 
@@ -518,7 +575,14 @@ func newApp(t *testing.T, ctx context.Context, admin *websocket.Conn, name strin
 
 func dashboardRows(t *testing.T, ctx context.Context, admin *websocket.Conn, name string) []map[string]any {
 	t.Helper()
-	write(t, ctx, admin, map[string]any{"op": "dashboard.list", "name": name})
+	return listRows(t, ctx, admin, map[string]any{"name": name})
+}
+
+func listRows(t *testing.T, ctx context.Context, admin *websocket.Conn, request map[string]any) []map[string]any {
+	t.Helper()
+	request["op"] = "dashboard.list"
+	write(t, ctx, admin, request)
+	name := request["name"]
 	got := read(t, ctx, admin)
 	if got["ok"] != true {
 		t.Fatalf("dashboard.list %s: %#v", name, got)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/bzrlab/calcron/internal/workflow"
@@ -19,12 +20,20 @@ func parseWorkflow(raw json.RawMessage) (workflowDefinition, error) {
 func compileCEL(expr string) (cel.Program, error) {
 	return workflow.CompileCEL(expr)
 }
+
+// ponytail: programs are cached per expression for the process lifetime; published versions are immutable and few.
+var celPrograms sync.Map
+
 func evalCEL(expr string, input, state map[string]any) (any, error) {
-	p, err := compileCEL(expr)
-	if err != nil {
-		return nil, err
+	p, cached := celPrograms.Load(expr)
+	if !cached {
+		compiled, err := compileCEL(expr)
+		if err != nil {
+			return nil, err
+		}
+		p, _ = celPrograms.LoadOrStore(expr, compiled)
 	}
-	out, _, err := p.Eval(map[string]any{"input": input, "state": state})
+	out, _, err := p.(cel.Program).Eval(map[string]any{"input": input, "state": state})
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +175,7 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 		}
 		next := ""
 		stop := false
+		var fault error
 		switch st.Type {
 		case "end":
 			_, e = tx.Exec(ctx, `update workflow_instances set status='completed',updated_at=now() where id=$1`, id)
@@ -190,12 +200,12 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 				if st.CorrelationExpr != "" {
 					out, ce := evalCEL(st.CorrelationExpr, in, state)
 					if ce != nil {
-						e = ce
+						fault = ce
 						break
 					}
 					k, good := out.(string)
 					if !good || k == "" {
-						e = errors.New("CEL correlationKeyExpr must return a non-empty string")
+						fault = errors.New("CEL correlationKeyExpr must return a non-empty string")
 						break
 					}
 					key = k
@@ -206,12 +216,12 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 		case "branch":
 			out, ce := evalCEL(st.When, in, state)
 			if ce != nil {
-				e = ce
+				fault = ce
 				break
 			}
 			b, good := out.(bool)
 			if !good {
-				e = errors.New("CEL branch must return bool")
+				fault = errors.New("CEL branch must return bool")
 				break
 			}
 			if b {
@@ -224,7 +234,7 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 			if st.DataExpr != "" {
 				out, ce := evalCEL(st.DataExpr, in, state)
 				if ce != nil {
-					e = ce
+					fault = ce
 					break
 				}
 				data, _ = json.Marshal(out)
@@ -238,11 +248,19 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 			}
 			stop = true
 		}
-		if e == nil && next != "" {
-			_, e = tx.Exec(ctx, `update workflow_instances set current_state=$2,status='running',waiting_event=null,correlation_key=null,wake_at=null,state=$3,updated_at=now() where id=$1`, id, next, mustJSON(state))
-		}
-		if e == nil {
-			_, e = tx.Exec(ctx, `insert into history(application_id,subject_type,subject_id,event) values($1,'workflow',$2,$3)`, app, id, st.Type)
+		if fault != nil {
+			_, e = tx.Exec(ctx, `update workflow_instances set status='failed',updated_at=now() where id=$1`, id)
+			if e == nil {
+				_, e = tx.Exec(ctx, `insert into history(application_id,subject_type,subject_id,event,data) values($1,'workflow',$2,'failed',$3)`, app, id, mustJSON(map[string]string{"state": current, "error": fault.Error()}))
+			}
+			stop = true
+		} else {
+			if e == nil && next != "" {
+				_, e = tx.Exec(ctx, `update workflow_instances set current_state=$2,status='running',waiting_event=null,correlation_key=null,wake_at=null,state=$3,updated_at=now() where id=$1`, id, next, mustJSON(state))
+			}
+			if e == nil {
+				_, e = tx.Exec(ctx, `insert into history(application_id,subject_type,subject_id,event) values($1,'workflow',$2,$3)`, app, id, st.Type)
+			}
 		}
 		if e != nil {
 			tx.Rollback(ctx)

@@ -12,7 +12,7 @@ type Admin struct{ db *pgxpool.Pool }
 func NewAdmin(db *pgxpool.Pool) *Admin { return &Admin{db: db} }
 func (a *Admin) Stats(ctx context.Context) protocol.Reply {
 	var scheduled, pending, blocked, workflows int
-	err := a.db.QueryRow(ctx, `select (select count(*) from schedules where status='scheduled'),(select count(*) from deliveries where status='pending'),(select count(*) from deliveries where status='blocked'),(select count(*) from workflow_instances where status!='completed')`).Scan(&scheduled, &pending, &blocked, &workflows)
+	err := a.db.QueryRow(ctx, `select (select count(*) from schedules where status='scheduled'),(select count(*) from deliveries where status='pending'),(select count(*) from deliveries where status='blocked'),(select count(*) from workflow_instances where status not in ('completed','failed'))`).Scan(&scheduled, &pending, &blocked, &workflows)
 	if err != nil {
 		return fail(err.Error())
 	}

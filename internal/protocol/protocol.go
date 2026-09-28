@@ -30,6 +30,7 @@ type Frame struct {
 	TokenID        string          `json:"tokenId,omitempty"`
 	SubjectType    string          `json:"subjectType,omitempty"`
 	SubjectID      string          `json:"subjectId,omitempty"`
+	Status         string          `json:"status,omitempty"`
 	Before         int64           `json:"before,omitempty"`
 }
 

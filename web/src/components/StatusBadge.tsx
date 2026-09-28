@@ -10,6 +10,7 @@ const MAP: Record<string, string> = {
   waiting_signal: "badge-warning",
   waiting_ack: "badge-warning",
   completed: "badge-success",
+  failed: "badge-error",
   online: "badge-success",
   offline: "badge-ghost",
 };

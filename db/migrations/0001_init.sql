@@ -98,7 +98,7 @@ create table if not exists workflow_instances (
   input jsonb not null default '{}'::jsonb,
   state jsonb not null default '{}'::jsonb,
   current_state text not null,
-  status text not null check (status in ('running','waiting_time','waiting_signal','waiting_ack','completed','cancelled')),
+  status text not null check (status in ('running','waiting_time','waiting_signal','waiting_ack','completed','cancelled','failed')),
   waiting_event text,
   correlation_key text,
   wake_at timestamptz,
@@ -136,3 +136,9 @@ create table if not exists start_schedules (
   foreign key(application_id,calendar_name) references calendars(application_id,name)
 );
 create index if not exists start_schedules_due_idx on start_schedules(next_at);
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'workflow_instances_status_check' and pg_get_constraintdef(oid) like '%failed%') then
+    alter table workflow_instances drop constraint if exists workflow_instances_status_check;
+    alter table workflow_instances add constraint workflow_instances_status_check check (status in ('running','waiting_time','waiting_signal','waiting_ack','completed','cancelled','failed'));
+  end if;
+end $$;
