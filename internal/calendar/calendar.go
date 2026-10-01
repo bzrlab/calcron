@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -136,12 +137,13 @@ func (m *Module) Load(ctx context.Context, app, name string) (Definition, error)
 var (
 	ErrLocalTimeGap   = errors.New("localTime does not exist on calendar date")
 	ErrNoEligibleDate = errors.New("no eligible calendar date")
+	ErrTimezone       = errors.New("calendar timezone cannot be loaded")
 )
 
 func NextTime(definition Definition, from time.Time, clock string) (time.Time, error) {
 	loc, err := time.LoadLocation(definition.Timezone)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, fmt.Errorf("%w: %v", ErrTimezone, definition.Timezone)
 	}
 	parts := strings.Split(clock, ":")
 	if len(parts) != 2 {

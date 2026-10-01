@@ -28,6 +28,7 @@ type StartSchedule = {
   local_time: string;
   missed_policy: string;
   next_at: string;
+  status: string;
 };
 
 const BUCKETS: { key: DueBucket; label: string; tone: string }[] = [
@@ -157,6 +158,7 @@ function StartSchedules() {
     { key: "time", label: "Local time", render: (s) => <span className="tabular-nums">{s.local_time}</span> },
     { key: "policy", label: "Missed occurrence policy", render: (s) => <code className="text-xs">{s.missed_policy}</code> },
     { key: "next", label: "Next start", render: (s) => <span title={fmt(s.next_at)}>{timeAgo(s.next_at)}</span> },
+    { key: "status", label: "Status", render: (s) => <StatusBadge value={s.status} /> },
     { key: "app", label: "Application", render: (s) => <AppName id={s.application_id} /> },
   ];
   return <DataTable columns={columns} rows={rows} loading={loading} empty="No start schedules. Set one from Publish." />;

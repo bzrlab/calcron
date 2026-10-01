@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAdmin } from "./admin";
 import type { CalendarDefinition } from "./calendar";
 
-type Start = { id: string; application_id: string; name: string; workflow_name: string; calendar_name: string; local_time: string; updated_at: string };
+type Start = { id: string; application_id: string; name: string; workflow_name: string; calendar_name: string; local_time: string; status: string; updated_at: string };
 
 // Display zones differ from the browser by at most 26 hours, so fetch two extra days each side of the grid.
 const PAD_DAYS = 2;
@@ -11,6 +11,7 @@ export const startEvent = (s: Start, at: Date) => ({ key: `start:${s.id}:${at.ge
 
 // Start schedules store only their next run; later runs come from the server's calendar.occurrences.
 // Passing `draft` projects every Start schedule against that unsaved definition instead of its stored calendar.
+// Broken schedules are excluded: they are retired and will not fire at any of these times.
 // ponytail: one request per Start schedule (dashboard.list caps them at 100); batch in one op if that cap grows.
 export function useStartOccurrences<S extends Start>(starts: S[], shown: Date[], version: string, draft?: CalendarDefinition) {
   const { send } = useAdmin();
@@ -19,7 +20,8 @@ export function useStartOccurrences<S extends Start>(starts: S[], shown: Date[],
   const last = shown[shown.length - 1];
   const from = new Date(first.getFullYear(), first.getMonth(), first.getDate() - PAD_DAYS);
   const to = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1 + PAD_DAYS);
-  const key = `${starts.map((s) => s.id + s.updated_at).join()}|${from.getTime()}|${to.getTime()}|${version}|${JSON.stringify(draft ?? null)}`;
+  const firing = starts.filter((s) => s.status !== "broken");
+  const key = `${firing.map((s) => s.id + s.updated_at).join()}|${from.getTime()}|${to.getTime()}|${version}|${JSON.stringify(draft ?? null)}`;
   useEffect(() => {
     let cancelled = false;
     const at = new Date(Math.max(from.getTime(), Date.now()));
@@ -28,7 +30,7 @@ export function useStartOccurrences<S extends Start>(starts: S[], shown: Date[],
       return;
     }
     void Promise.all(
-      starts.map(async (s) => {
+      firing.map(async (s) => {
         const r = await send({
           op: "calendar.occurrences",
           applicationId: s.application_id,

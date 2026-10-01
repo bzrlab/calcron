@@ -56,6 +56,18 @@ _Avoid_: Weekend setting, cron calendar
 A named calendar-aware recurrence that starts one workflow instance at each eligible occurrence.
 _Avoid_: Cron job, repeating timer
 
+**Broken start schedule**:
+A start schedule that can never compute another occurrence and has been retired from firing. It keeps its identity and history, and returns to active when an application re-saves it.
+_Avoid_: Failed job, disabled timer
+
+**Due batch**:
+One bounded claim of ready work, taken by whichever replica gets there first. A batch row must either be completed or returned to the queue; anything left eligible but unprocessable starves the batch.
+_Avoid_: Batch job, poll
+
+**Starved**:
+A due row that a claim keeps selecting but no replica can process, so it occupies batch capacity indefinitely. Delivery claims skip applications with no connected peer; start schedule claims break or defer rows they cannot resolve.
+_Avoid_: Backlog, stuck job
+
 **Missed occurrence policy**:
 A start schedule's explicit instruction to skip, run one late instance, or create every missed instance after downtime.
 _Avoid_: Recovery default, catch-up behavior

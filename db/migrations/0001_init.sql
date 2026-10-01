@@ -130,12 +130,19 @@ create table if not exists start_schedules (
   missed_policy text not null check (missed_policy in ('skip','run_once_late','catch_up')),
   input jsonb not null default '{}'::jsonb,
   next_at timestamptz not null,
+  status text not null default 'active' check (status in ('active','broken')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique(application_id,name),
   foreign key(application_id,calendar_name) references calendars(application_id,name)
 );
-create index if not exists start_schedules_due_idx on start_schedules(next_at);
+alter table start_schedules add column if not exists status text not null default 'active';
+create index if not exists start_schedules_due_idx on start_schedules(next_at) where status = 'active';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'start_schedules_status_check') then
+    alter table start_schedules add constraint start_schedules_status_check check (status in ('active','broken'));
+  end if;
+end $$;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'workflow_instances_status_check' and pg_get_constraintdef(oid) like '%failed%') then
     alter table workflow_instances drop constraint if exists workflow_instances_status_check;

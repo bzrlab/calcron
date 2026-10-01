@@ -8,7 +8,7 @@ import { canCancel, canReplay, useDeliveryActions } from "../lib/useDeliveryActi
 import { fmt } from "../lib/format";
 import { CalendarGrid, type GridEvent, type Tone } from "../components/CalendarGrid";
 import { StatusBadge } from "../components/StatusBadge";
-import { AppName, Drawer, Fields, IdChip, Pre } from "../components/ui";
+import { AppName, Drawer, Fields, IdChip, Pre, SubjectHistory } from "../components/ui";
 import { StartScheduleForm, type StartSchedule } from "./Publish";
 
 type Schedule = { id: string; application_id: string; schedule_key: string; event: string; payload: unknown; run_at: string; status: string };
@@ -238,9 +238,17 @@ function StartDetail({ s, at, tz }: { s: StartSchedule; at: Date; tz: string }) 
         rows={[
           ["This run", fmt(at.toISOString(), tz)],
           ["Stored next run", fmt(s.next_at, tz)],
+          ["Status", <StatusBadge value={s.status} />],
           ["Application", <AppName id={s.application_id} />],
         ]}
       />
+      {s.status === "broken" && (
+        <p className="text-xs text-error">
+          This start schedule cannot compute another occurrence and is no longer firing. Check the calendar it
+          references, then re-save the form below to reactivate it.
+        </p>
+      )}
+      {s.status === "broken" && <SubjectHistory type="start_schedule" id={s.id} />}
       <p className="text-xs text-base-content/50">Changes apply to every future run of this Start schedule.</p>
       <StartScheduleForm key={s.id + s.updated_at} appId={s.application_id} initial={s} onSaved={() => undefined} />
     </>

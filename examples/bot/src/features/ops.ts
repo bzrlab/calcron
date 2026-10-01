@@ -5,14 +5,14 @@ import { button, row, type Feature } from "../discord.ts";
 
 type Stats = { scheduled: number; pending: number; blocked: number; workflows: number };
 type DeliveryRow = { id: string; event: string; status: string; attempts: number; created_at: string };
-type StartRow = { name: string; workflow_name: string; calendar_name: string; local_time: string; missed_policy: string; input: unknown; next_at: string };
+type StartRow = { name: string; workflow_name: string; calendar_name: string; local_time: string; missed_policy: string; input: unknown; next_at: string; status: string };
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ts = (iso: string, style = "F") => `<t:${Math.floor(new Date(iso).getTime() / 1000)}:${style}>`;
 
 const startSchedules = (admin: Admin, appId: string) => admin.call<StartRow[]>("dashboard.list", { name: "start_schedules", applicationId: appId });
 
-/** Overrides one date, then re-sets start schedules: a calendar edit alone leaves an already-computed next occurrence in place. */
+/** Overrides one date, then re-sets start schedules: a calendar edit alone leaves an already-computed next occurrence in place. Re-setting also reactivates a start schedule that was retired as broken. */
 export async function overrideDate(admin: Admin, appId: string, date: string, status: "off" | "on" | "default") {
   const calendar = await loadCalendar(admin, appId);
   if (!calendar) throw new Error("No business calendar yet. Run `npm run provision`.");
@@ -79,7 +79,8 @@ export const ops: Feature = {
       const embed = await withAdmin(async a => {
         const calendar = await loadCalendar(a, appId);
         if (!calendar) throw new Error("No business calendar yet. Run `npm run provision`.");
-        const daily = (await startSchedules(a, appId)).find(s => s.name === "daily-standup");
+        const starts = await startSchedules(a, appId);
+        const daily = starts.find(s => s.name === "daily-standup");
         const localTime = daily?.local_time ?? env("STANDUP_TIME", "10:00");
         const now = new Date();
         const [{ nextAt }, { occurrences }] = await Promise.all([
@@ -90,12 +91,18 @@ export const ops: Feature = {
           }),
         ]);
         const overrides = Object.entries(calendar.overrides ?? {}).sort();
-        return new EmbedBuilder().setTitle(`📅 ${CALENDAR}`).setColor(0x5865f2).addFields(
+        // calendar.next always projects a time, so a retired start schedule still looks
+        // healthy here. Surface the status so the operator is not misled. The standup rows
+        // describe `daily` specifically, so only its own state may retract them.
+        const broken = starts.filter(s => s.status === "broken");
+        const standupStopped = daily?.status === "broken";
+        return new EmbedBuilder().setTitle(`📅 ${CALENDAR}`).setColor(broken.length ? 0xed4245 : 0x5865f2).addFields(
           { name: "Timezone", value: calendar.timezone, inline: true },
           { name: "Working days", value: calendar.weekdays.map(d => DAYS[d]).join(", "), inline: true },
           { name: "Missed standups", value: daily?.missed_policy ?? "not provisioned", inline: true },
-          { name: "Next standup", value: `${ts(nextAt)} (${ts(nextAt, "R")})` },
-          { name: "Next 14 days", value: occurrences.map(o => ts(o, "D")).join("\n") || "none" },
+          { name: "Next standup", value: standupStopped ? "**stopped firing**" : `${ts(nextAt)} (${ts(nextAt, "R")})` },
+          { name: "Next 14 days", value: standupStopped ? "none — start schedule is broken" : occurrences.map(o => ts(o, "D")).join("\n") || "none" },
+          { name: "Broken start schedules", value: broken.map(s => `\`${s.name}\` (calendar \`${s.calendar_name}\`)`).join("\n") || "none" },
           { name: "Overrides", value: overrides.map(([d, on]) => `${d}: ${on ? "extra working day" : "holiday"}`).join("\n") || "none" },
         );
       });

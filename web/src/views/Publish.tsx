@@ -131,6 +131,7 @@ export type StartSchedule = {
   missed_policy: string;
   input: unknown;
   next_at: string;
+  status: string;
   updated_at: string;
 };
 

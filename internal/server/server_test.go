@@ -707,3 +707,104 @@ func read(t *testing.T, ctx context.Context, c *websocket.Conn) map[string]any {
 	}
 	return v
 }
+
+
+// Deliveries for applications with no connected peer must not occupy claim slots,
+// or they starve every connected application once they exceed the batch limit.
+func TestOfflineDeliveriesDoNotStarveConnectedApplications(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	_, offlineToken := newApp(t, ctx, admin, "starve-offline")
+	offline := dial(t, ctx, h.URL, offlineToken)
+	// Schedule them into the future, then disconnect well before they come due, so
+	// they become pending deliveries that no replica is able to send.
+	const stuck = 120
+	for i := 0; i < stuck; i++ {
+		write(t, ctx, offline, map[string]any{"op": "schedule.set", "idempotencyKey": fmt.Sprintf("stuck-%d", i), "key": fmt.Sprintf("stuck:%d", i), "event": "stuck.close", "after": "4s"})
+		if got := read(t, ctx, offline); got["ok"] != true {
+			t.Fatalf("stuck set %d: %#v", i, got)
+		}
+	}
+	offline.CloseNow()
+	time.Sleep(4600 * time.Millisecond)
+
+	// This one is due now, so its attempt time is later than every stuck row and it
+	// is the one a fixed claim limit would exclude.
+	_, liveToken := newApp(t, ctx, admin, "starve-live")
+	live := dial(t, ctx, h.URL, liveToken)
+	defer live.CloseNow()
+	write(t, ctx, live, map[string]any{"op": "schedule.set", "idempotencyKey": "live-set", "key": "live:one", "event": "live.close", "after": "1ms"})
+	if got := read(t, ctx, live); got["ok"] != true {
+		t.Fatalf("live set: %#v", got)
+	}
+	if got := delivery(t, ctx, live); got["event"] != "live.close" {
+		t.Fatalf("live delivery event = %#v, want live.close", got["event"])
+	}
+}
+
+// A start schedule that can never compute another occurrence must retire itself
+// rather than occupy claim slots forever and starve the healthy ones behind it.
+func TestUnresolvableStartSchedulesRetireInsteadOfStarving(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "start-starve")
+	app := dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+
+	for _, name := range []string{"healthy", "doomed"} {
+		write(t, ctx, admin, map[string]any{"op": "calendar.set", "applicationId": appID, "name": name, "data": map[string]any{"timezone": "UTC", "weekdays": []int{0, 1, 2, 3, 4, 5, 6}}})
+		if got := read(t, ctx, admin); got["ok"] != true {
+			t.Fatalf("calendar.set %s: %#v", name, got)
+		}
+	}
+	// Separate workflows so the healthy count is independent of how many doomed rows
+	// happened to be claimed in the window before the calendar was broken.
+	for _, name := range []string{"starve", "healthy-run"} {
+		definition := map[string]any{"initial": "emit", "states": map[string]any{
+			"emit": map[string]any{"type": "emit", "target": appID, "event": name, "next": "end"},
+			"end":  map[string]any{"type": "end"},
+		}}
+		write(t, ctx, admin, map[string]any{"op": "workflow.publish", "applicationId": appID, "name": name, "data": definition})
+		if got := read(t, ctx, admin); got["ok"] != true {
+			t.Fatalf("workflow.publish %s: %#v", name, got)
+		}
+	}
+
+	clock := time.Now().UTC().Format("15:04")
+	doomedAt := time.Now().UTC().AddDate(0, 0, -3).Truncate(time.Minute).Format(time.RFC3339)
+	// The healthy schedule is due later, so under a fixed claim limit it is always
+	// the one excluded once the doomed batch is larger than that limit.
+	healthyAt := time.Now().UTC().AddDate(0, 0, -2).Truncate(time.Minute).Format(time.RFC3339)
+	const doomed = 300
+	for i := 0; i < doomed; i++ {
+		write(t, ctx, admin, map[string]any{"op": "start-schedule.set", "applicationId": appID, "name": fmt.Sprintf("doomed-%d", i), "workflow": "starve", "calendar": "doomed", "localTime": clock, "missedPolicy": "skip", "at": doomedAt})
+		if got := read(t, ctx, admin); got["ok"] != true {
+			t.Fatalf("doomed set %d: %#v", i, got)
+		}
+	}
+	write(t, ctx, admin, map[string]any{"op": "start-schedule.set", "applicationId": appID, "name": "healthy", "workflow": "healthy-run", "calendar": "healthy", "localTime": clock, "missedPolicy": "run_once_late", "at": healthyAt})
+	if got := read(t, ctx, admin); got["ok"] != true {
+		t.Fatalf("healthy set: %#v", got)
+	}
+
+	// Make the doomed calendar permanently unresolvable: every date it can reach is ineligible.
+	overrides := map[string]bool{}
+	for offset := -30; offset < 370; offset++ {
+		overrides[time.Now().UTC().AddDate(0, 0, offset).Format("2006-01-02")] = false
+	}
+	write(t, ctx, admin, map[string]any{"op": "calendar.set", "applicationId": appID, "name": "doomed", "data": map[string]any{"timezone": "UTC", "weekdays": []int{0, 1, 2, 3, 4, 5, 6}, "overrides": overrides}})
+	if got := read(t, ctx, admin); got["ok"] != true {
+		t.Fatalf("calendar.set doomed: %#v", got)
+	}
+
+	if got := waitForWorkflowCount(t, ctx, admin, appID, "healthy-run", 1); got != 1 {
+		t.Fatalf("healthy-run instances = %d, want 1", got)
+	}
+	broken := 0
+	for _, row := range dashboardRows(t, ctx, admin, "start_schedules") {
+		if row["status"] == "broken" {
+			broken++
+		}
+	}
+	if broken == 0 {
+		t.Fatal("no start schedule retired after its calendar became unresolvable")
+	}
+}

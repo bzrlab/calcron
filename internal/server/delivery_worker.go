@@ -98,7 +98,13 @@ func (s *Server) makeDue(ctx context.Context) {
 }
 
 func (s *Server) deliver(ctx context.Context) {
-	rows, err := s.db.Query(ctx, `select id,application_id,coalesce(schedule_id,''),event,payload,attempts from deliveries where status='pending' and next_attempt_at<=now() order by next_attempt_at limit 100`)
+	// Deliveries for disconnected applications are left unqueried: they would otherwise
+	// sort first on every tick without ever advancing, starving the batch of live work.
+	apps := s.hub.connected()
+	if len(apps) == 0 {
+		return
+	}
+	rows, err := s.db.Query(ctx, `select id,application_id,coalesce(schedule_id,''),event,payload,attempts from deliveries where status='pending' and next_attempt_at<=now() and application_id=any($1) and (locked_until is null or locked_until<=now()) order by next_attempt_at limit 100`, apps)
 	if err != nil {
 		return
 	}
