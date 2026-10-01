@@ -49,10 +49,10 @@ export function Docs() {
         <pre><code>{`{"id":"3","op":"delivery.ack","deliveryId":"…","idempotencyKey":"ack:…"}`}</code></pre>
         <p>An acknowledgement confirms durable receipt; it does not mean the business action has completed. Use <code>signal</code> to report an external outcome to a waiting workflow.</p>
 
-        <h2>SDKs and examples</h2>
+        <h2>SDKs and guides</h2>
         <ul>
-          <li><a href="https://www.npmjs.com/package/@bzrlab/calcron">Node / TypeScript SDK</a></li>
-          <li><a href="https://pkg.go.dev/github.com/bzrlab/calcron/sdk/go">Go SDK</a></li>
+          <li><a href="https://github.com/bzrlab/calcron/blob/main/sdk/node/README.md">Node / TypeScript SDK guide</a></li>
+          <li><a href="https://github.com/bzrlab/calcron/blob/main/sdk/go/README.md">Go SDK guide</a></li>
         </ul>
         <p>Application tokens can perform application operations only. Workflow publishing, calendar management, and recovery actions require an administrator.</p>
       </article>
