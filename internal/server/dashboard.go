@@ -24,8 +24,9 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	// forever. index.html must revalidate so a redeploy is picked up.
 	if strings.HasPrefix(r.URL.Path, "/assets/") {
 		w.Header().Set("cache-control", "public, max-age=31536000, immutable")
-	} else {
-		w.Header().Set("cache-control", "no-cache")
+		http.FileServer(http.FS(sub)).ServeHTTP(w, r)
+		return
 	}
-	http.FileServer(http.FS(sub)).ServeHTTP(w, r)
+	w.Header().Set("cache-control", "no-cache")
+	http.ServeFileFS(w, r, sub, "index.html")
 }

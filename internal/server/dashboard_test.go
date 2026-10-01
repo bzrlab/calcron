@@ -39,6 +39,19 @@ func TestDashboardServesEmbeddedBuild(t *testing.T) {
 	}
 }
 
+func TestDashboardServesAppShellForClientRoutes(t *testing.T) {
+	s := &server.Server{}
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	res := httptest.NewRecorder()
+	s.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET /docs status = %d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), `<div id="root">`) {
+		t.Fatalf("GET /docs did not serve the dashboard app shell: %s", res.Body.String())
+	}
+}
+
 func TestHealth(t *testing.T) {
 	s := &server.Server{}
 	h := httptest.NewServer(s.Handler())
