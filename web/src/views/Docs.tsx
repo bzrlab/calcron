@@ -5,6 +5,7 @@ type Language = "node" | "go";
 const links = [
   ["Quickstart", "quickstart"],
   ["Connect", "connect"],
+  ["Raw WebSocket", "wire-format"],
   ["Schedule work", "scheduling"],
   ["Recurring workflows", "recurring"],
   ["Handle deliveries", "deliveries"],
@@ -76,12 +77,16 @@ log.Println(result.RunAt)
 };
 
 function CodeBlock({ language, code, onLanguage }: { language: Language; code: string; onLanguage: (value: Language) => void }) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"copied" | "failed" | null>(null);
 
   async function copy() {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    window.setTimeout(() => setCopyState(null), 1800);
   }
 
   return (
@@ -94,8 +99,8 @@ function CodeBlock({ language, code, onLanguage }: { language: Language; code: s
             </button>
           ))}
         </div>
-        <button className="btn btn-ghost btn-xs text-base-content/60" onClick={() => void copy()} aria-label="Copy code example">
-          {copied ? "Copied" : "Copy"}
+        <button className="btn btn-ghost btn-xs text-base-content/60" onClick={() => void copy()} aria-label="Copy code example" aria-live="polite">
+          {copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}
         </button>
       </div>
       <pre className="m-0 overflow-x-auto p-5 text-xs leading-6 text-slate-200 sm:text-sm"><code>{code}</code></pre>
@@ -181,8 +186,21 @@ export function Docs() {
             <div className="mt-4 rounded-xl border border-warning/20 bg-warning/5 p-4 text-sm leading-6"><span className="font-medium">Admin and app tokens have different access.</span> App tokens schedule and manage work for one application. Publishing workflows, editing calendars, and delivery recovery require an admin token.</div>
           </section>
 
+          <section id="wire-format" className="scroll-mt-24 border-b border-base-300 py-12 sm:py-14">
+            <SectionTitle eyebrow="03 / Wire protocol" title="The SDK speaks plain JSON over WebSocket">You can use the protocol directly from any WebSocket client. Connect to <code>wss://your-host/ws</code>, then send authentication as the first text frame.</SectionTitle>
+            <div className="space-y-4">
+              <div><p className="mb-2 text-xs font-medium text-base-content/65">1. Authenticate with an application token</p><pre className="overflow-x-auto rounded-xl border border-white/10 bg-[#0d111b] p-4 text-xs leading-6 text-slate-200"><code>{`{"id":"1","op":"auth","token":"YOUR_APPLICATION_TOKEN"}
+{"id":"1","ok":true,"data":{"application":"APP_ID","admin":false}}`}</code></pre></div>
+              <div><p className="mb-2 text-xs font-medium text-base-content/65">2. Send a command and correlate its reply by id</p><pre className="overflow-x-auto rounded-xl border border-white/10 bg-[#0d111b] p-4 text-xs leading-6 text-slate-200"><code>{`{"id":"2","op":"schedule.set","key":"invoice:42","event":"invoice.due","after":"24h","idempotencyKey":"invoice:42:due:v1"}
+{"id":"2","ok":true,"data":{"scheduleId":"…","runAt":"2026-10-02T09:00:00Z"}}`}</code></pre></div>
+              <div><p className="mb-2 text-xs font-medium text-base-content/65">3. Receive a delivery, then acknowledge it</p><pre className="overflow-x-auto rounded-xl border border-white/10 bg-[#0d111b] p-4 text-xs leading-6 text-slate-200"><code>{`{"op":"delivery","deliveryId":"DELIVERY_ID","event":"invoice.due","data":{"invoiceId":"42"}}
+{"id":"3","op":"delivery.ack","deliveryId":"DELIVERY_ID","idempotencyKey":"ack:DELIVERY_ID"}`}</code></pre></div>
+            </div>
+            <p className="mt-4 text-sm leading-6 text-base-content/65">Replies carry <code>id</code> and <code>ok</code>. On failure they include an <code>error</code> string. An invalid token returns <code>unauthorized</code> and closes the connection. Every application state change needs an <code>idempotencyKey</code>.</p>
+          </section>
+
           <section id="scheduling" className="scroll-mt-24 border-b border-base-300 py-12 sm:py-14">
-            <SectionTitle eyebrow="03 / Scheduling" title="Choose a one-time deadline">Use a duration for work relative to now, or an RFC 3339 timestamp for a fixed instant. The schedule key identifies the application-owned schedule.</SectionTitle>
+            <SectionTitle eyebrow="04 / Scheduling" title="Choose a one-time deadline">Use a duration for work relative to now, or an RFC 3339 timestamp for a fixed instant. The schedule key identifies the application-owned schedule.</SectionTitle>
             <div className="overflow-x-auto rounded-xl border border-base-300 bg-base-100">
               <table className="table table-sm"><thead><tr><th>Intent</th><th>Example</th><th>Behavior</th></tr></thead><tbody>
                 <tr><td>Relative</td><td><code>after: "30m"</code></td><td>Due 30 minutes after creation.</td></tr>
@@ -194,7 +212,8 @@ export function Docs() {
           </section>
 
           <section id="recurring" className="scroll-mt-24 border-b border-base-300 py-12 sm:py-14">
-            <SectionTitle eyebrow="04 / Recurrence" title="Recurring starts use calendars">Calcron does not parse cron strings such as <code>* * * * *</code>. Set up a named calendar, then create a start schedule with a local time and missed-run policy.</SectionTitle>
+            <SectionTitle eyebrow="05 / Recurrence" title="Recurring starts use calendars">Calcron does not parse cron strings such as <code>* * * * *</code>. Set up a named calendar, then create a start schedule with a local time and missed-run policy.</SectionTitle>
+            <p className="mb-4 text-sm leading-6 text-base-content/65"><code>0 9 * * 1-5</code> means 09:00 Monday to Friday in cron notation. The Calcron equivalent is a calendar with weekdays <code>[1,2,3,4,5]</code> in the timezone you want, plus a start schedule at <code>09:00</code>. Weekday numbers use Sunday <code>0</code> through Saturday <code>6</code>.</p>
             <div className="rounded-2xl border border-base-300 bg-base-100 p-5 sm:p-6">
               <div className="grid gap-4 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-center">
                 {["Calendar\nWeekdays, timezone, overrides", "Local time\n09:00", "Start schedule\nWorkflow + missed policy"].map((item, index) => (
@@ -211,10 +230,17 @@ export function Docs() {
                 </div>
               </div>
             </div>
+            <details className="mt-4 rounded-xl border border-base-300 bg-base-100 p-4">
+              <summary className="cursor-pointer text-sm font-medium">Example admin frames for weekday mornings</summary>
+              <p className="my-3 text-xs leading-5 text-base-content/55">Send these with an admin token. The calendar opens Monday to Friday in New York time; the start schedule launches the latest published <code>daily-report</code> workflow at 09:00.</p>
+              <pre className="overflow-x-auto rounded-xl bg-[#0d111b] p-4 text-xs leading-6 text-slate-200"><code>{`{"id":"1","op":"calendar.set","applicationId":"APP_ID","name":"business-days","data":{"timezone":"America/New_York","weekdays":[1,2,3,4,5],"overrides":{"2026-12-25":false}}}
+{"id":"2","op":"start-schedule.set","applicationId":"APP_ID","name":"weekday-report","workflow":"daily-report","calendar":"business-days","localTime":"09:00","missedPolicy":"run_once_late","data":{"region":"east"}}`}</code></pre>
+              <p className="mt-3 text-xs leading-5 text-base-content/55">An override sets one date open (<code>true</code>) or closed (<code>false</code>), regardless of its weekday. There is no raw cron mode for every-minute jobs; use one-time schedules or throttles for event-driven work.</p>
+            </details>
           </section>
 
           <section id="deliveries" className="scroll-mt-24 border-b border-base-300 py-12 sm:py-14">
-            <SectionTitle eyebrow="05 / Delivery" title="Save first, acknowledge second">Calcron delivers at least once. If a connection drops before acknowledgement, the same delivery ID may arrive again.</SectionTitle>
+            <SectionTitle eyebrow="06 / Delivery" title="Save first, acknowledge second">Calcron delivers at least once. If a connection drops before acknowledgement, the same delivery ID may arrive again.</SectionTitle>
             <ol className="space-y-3">
               {["Receive the event and its delivery ID.", "Write the business change and receipt in one durable, idempotent operation.", "Acknowledge only after that write succeeds."].map((step, index) => <li key={step} className="flex gap-4 rounded-xl border border-base-300 bg-base-100 p-4"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary/15 font-mono text-xs text-primary">{index + 1}</span><span className="pt-1 text-sm leading-5">{step}</span></li>)}
             </ol>
@@ -222,7 +248,7 @@ export function Docs() {
           </section>
 
           <section id="operations" className="scroll-mt-24 border-b border-base-300 py-12 sm:py-14">
-            <SectionTitle eyebrow="06 / Reference" title="Application operations">Every state-changing operation requires an application-supplied idempotency key.</SectionTitle>
+            <SectionTitle eyebrow="07 / Reference" title="Application operations">Every state-changing operation requires an application-supplied idempotency key.</SectionTitle>
             <div className="overflow-x-auto rounded-xl border border-base-300 bg-base-100">
               <table className="table table-sm"><thead><tr><th>Operation</th><th>Required fields</th><th>Returns</th></tr></thead><tbody>
                 <tr><td><code>schedule.set</code></td><td>key, event, after or at, idempotencyKey</td><td>scheduleId, runAt</td></tr>
@@ -238,7 +264,7 @@ export function Docs() {
           </section>
 
           <section id="reliability" className="scroll-mt-24 py-12 sm:py-14">
-            <SectionTitle eyebrow="07 / Reliability" title="Plan for reconnects and retries">SDKs reconnect after transport loss. A request that was in flight during a disconnect fails locally; retry that same intent with the same idempotency key.</SectionTitle>
+            <SectionTitle eyebrow="08 / Reliability" title="Plan for reconnects and retries">SDKs reconnect after transport loss. A request that was in flight during a disconnect fails locally; retry that same intent with the same idempotency key.</SectionTitle>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-base-300 bg-base-100 p-5"><p className="text-sm font-medium">Make writes safe to repeat</p><p className="mt-2 text-xs leading-5 text-base-content/55">Deduplicate delivery side effects by delivery ID or business key before acknowledging.</p></div>
               <div className="rounded-xl border border-base-300 bg-base-100 p-5"><p className="text-sm font-medium">Separate receipt from completion</p><p className="mt-2 text-xs leading-5 text-base-content/55">Acknowledge after durable handling. Signal a workflow later when the external work finishes.</p></div>
