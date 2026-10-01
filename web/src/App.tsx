@@ -13,6 +13,7 @@ import { Calendars } from "./views/Calendars";
 import { CalendarView } from "./views/CalendarView";
 import { History } from "./views/History";
 import { Publish } from "./views/Publish";
+import { Docs } from "./views/Docs";
 
 const GROUPS: { label: string; items: { key: string; label: string; view: () => React.ReactNode; wide?: boolean }[] }[] = [
   {
@@ -125,6 +126,7 @@ function Gate() {
 }
 
 export default function App() {
+  if (location.pathname === "/docs" || location.pathname === "/docs/") return <Docs />;
   return (
     <AdminProvider>
       <Gate />
