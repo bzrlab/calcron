@@ -196,7 +196,7 @@ export function Docs() {
               <div><p className="mb-2 text-xs font-medium text-base-content/65">3. Receive a delivery, then acknowledge it</p><pre className="overflow-x-auto rounded-xl border border-white/10 bg-[#0d111b] p-4 text-xs leading-6 text-slate-200"><code>{`{"op":"delivery","deliveryId":"DELIVERY_ID","event":"invoice.due","data":{"invoiceId":"42"}}
 {"id":"3","op":"delivery.ack","deliveryId":"DELIVERY_ID","idempotencyKey":"ack:DELIVERY_ID"}`}</code></pre></div>
             </div>
-            <p className="mt-4 text-sm leading-6 text-base-content/65">Replies carry <code>id</code> and <code>ok</code>. On failure they include an <code>error</code> string. An invalid token returns <code>unauthorized</code> and closes the connection. Every application state change needs an <code>idempotencyKey</code>.</p>
+            <p className="mt-4 text-sm leading-6 text-base-content/65">Replies carry <code>id</code> and <code>ok</code>. On failure they include an <code>error</code> string. An invalid token returns <code>unauthorized</code> and closes the connection. If Calcron cannot check the token, for example while its database is down, it returns <code>unavailable</code> instead; reconnect and try again. Every application state change needs an <code>idempotencyKey</code>.</p>
           </section>
 
           <section id="scheduling" className="scroll-mt-24 border-b border-base-300 py-12 sm:py-14">

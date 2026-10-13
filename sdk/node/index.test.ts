@@ -41,6 +41,8 @@ function installFakeWebSocket() {
   globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
 }
 
+const settle = () => new Promise(resolve => setImmediate(resolve));
+
 async function connected() {
   installFakeWebSocket();
   const client = new Calcron("ws://calcron.test/ws", "test");
@@ -113,6 +115,20 @@ test("correlates replies that arrive out of order", async () => {
   client.close();
 });
 
+test("times out a request that gets no reply", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.respond = () => {};
+  const cancel = client.cancel("invoice:42", "cancel:invoice:42:v1");
+  t.mock.timers.tick(10_000);
+  await assert.rejects(cancel, /Calcron did not answer schedule\.cancel within 10 s/);
+  assert.equal(socket.readyState, 3, "kept the unanswering connection");
+  t.mock.timers.tick(250);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 2, "did not reconnect");
+  client.close();
+});
+
 test("delivers duplicate delivery IDs to an idempotent handler", async () => {
   const { client, socket } = await connected();
   const ids: string[] = [];
@@ -121,6 +137,71 @@ test("delivers duplicate delivery IDs to an idempotent handler", async () => {
   socket.reply({ op: "delivery", deliveryId: "d-1", event: "invoice.due", data: {} });
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(ids, ["d-1", "d-1"]);
+  client.close();
+});
+
+test("leaves a delivery unacknowledged when its handler fails, without crashing the process", async t => {
+  const { client, socket } = await connected();
+  const logged = t.mock.method(console, "error", () => {});
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  t.after(() => process.off("unhandledRejection", onUnhandled));
+  client.on("invoice.due", async () => { throw new Error("database down"); });
+  client.on("invoice.overdue", () => { throw new Error("bad payload"); });
+  socket.reply({ op: "delivery", deliveryId: "d-1", event: "invoice.due", data: {} });
+  socket.reply({ op: "delivery", deliveryId: "d-2", event: "invoice.overdue", data: {} });
+  await settle();
+  assert.deepEqual(unhandled, []);
+  assert.equal(socket.sent.some(frame => frame.op === "delivery.ack"), false);
+  assert.equal(logged.mock.callCount(), 2);
+  client.close();
+});
+
+test("drops the socket when Calcron sends invalid JSON", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.onmessage?.({ data: "not-json" });
+  await settle();
+  assert.equal(socket.onclose, null);
+  assert.equal(socket.readyState, 3);
+  t.mock.timers.tick(250);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 2, "did not reconnect");
+  client.close();
+});
+
+test("rejects a request when send throws", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.send = () => { throw new Error("socket dead"); };
+  await assert.rejects(client.cancel("invoice:42", "cancel:invoice:42:v1"), /socket dead/);
+  t.mock.timers.tick(10_000);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 1, "timer dropped the connection");
+});
+
+test("rejects an in-flight request when closed", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.respond = () => {};
+  const pending = client.cancel("invoice:42", "cancel:invoice:42:v1");
+  client.close();
+  await assert.rejects(pending, /Calcron disconnected/);
+  t.mock.timers.tick(10_000);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 1, "reconnected after close");
+});
+
+test("does not reconnect when the first connection drops during auth", async t => {
+  installFakeWebSocket();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  FakeWebSocket.onCreate = socket => { socket.respond = () => socket.close(); };
+  const client = new Calcron("ws://calcron.test/ws", "test");
+  await assert.rejects(client.connect(), /Calcron disconnected/);
+  t.mock.timers.tick(10_000);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 1, "reconnected after a failed connect");
   client.close();
 });
 
@@ -148,10 +229,40 @@ test("reconnects after a transport loss", async () => {
   client.close();
 });
 
+test("stays closed when closed while waiting to reconnect", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.close();
+  client.close();
+  t.mock.timers.tick(10_000);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 1, "reconnected after close");
+});
+
+for (const [failure, respond] of [
+  ["the connection drops", (socket: FakeWebSocket) => socket.close()],
+  ["Calcron is unavailable", (socket: FakeWebSocket, frame: Frame) => socket.reply({ id: frame.id, ok: false, error: "unavailable" })],
+] as const) {
+  test(`keeps reconnecting when ${failure} during re-authentication`, async t => {
+    const { client, socket } = await connected();
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    FakeWebSocket.onCreate = reconnecting => {
+      if (FakeWebSocket.connections.length === 2) reconnecting.respond = frame => respond(reconnecting, frame);
+    };
+    socket.close();
+    t.mock.timers.tick(250);
+    await settle();
+    t.mock.timers.tick(500);
+    await settle();
+    assert.equal(FakeWebSocket.connections.length, 3, "gave up reconnecting");
+    client.close();
+  });
+}
+
 test("stops and closes when authentication fails during reconnect", async () => {
   const { client, socket } = await connected();
   FakeWebSocket.onCreate = reconnecting => {
-    if (FakeWebSocket.connections.length === 2) reconnecting.respond = frame => reconnecting.reply({ id: frame.id, ok: false, error: "bad token" });
+    if (FakeWebSocket.connections.length === 2) reconnecting.respond = frame => reconnecting.reply({ id: frame.id, ok: false, error: "unauthorized" });
   };
   socket.close();
   await new Promise(resolve => setTimeout(resolve, 300));

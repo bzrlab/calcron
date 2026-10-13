@@ -8,7 +8,7 @@ Set `CALCRON_URL` to the WebSocket URL (for example, `ws://calcron.internal:8080
 
 Install the Node package with `npm install @bzrlab/calcron`. Go applications import `github.com/bzrlab/calcron/sdk/go` (package name `cron`).
 
-The SDK authenticates during `connect` / `Connect`. A failed authentication returns an error; reconnect attempts use exponential backoff up to ten seconds. `close` / `Close` stops reconnecting. A request in flight when a connection is lost fails, so retry it with the **same idempotency key**.
+The SDK authenticates during `connect` / `Connect`. A failed authentication returns an error; reconnect attempts use exponential backoff up to ten seconds. Node stops reconnecting only when Calcron answers `unauthorized`; a lost connection or an `unavailable` answer during re-authentication is retried. `close` / `Close` stops reconnecting. A request in flight when a connection is lost fails, so retry it with the **same idempotency key**.
 
 ## Application operations
 
@@ -38,7 +38,7 @@ Every state-changing operation requires an application-supplied idempotency key.
 | Go | `Cancel`, `Extend`, `Start`, `Signal` | Same positional fields as Node, prefixed with `context.Context` → typed result and `error` |
 | Go | `On(event, func(Event))` | `Event` has `ID`, `Name`, `Data`; `Ack(ctx)` returns `AckResult, error` |
 
-Node rejects connection/authentication and server failures as `Error`; a pending request rejects with `Calcron disconnected` if its socket is lost. Go returns those failures as `error`; `Set` also rejects a schedule that does not provide exactly one deadline. Server validation errors include missing required fields, malformed durations or timestamps, and unknown workflow or schedule names.
+Node rejects connection/authentication and server failures as `Error`; a pending request rejects with `Calcron disconnected` if its socket is lost, and with `Calcron did not answer <op> within 10 s` if no reply arrives; the client then drops that connection and reconnects, because a half-open connection never closes on its own. A Go request waits as long as its `context.Context` allows, so give it a deadline. Go returns those failures as `error`; `Set` also rejects a schedule that does not provide exactly one deadline. Server validation errors include missing required fields, malformed durations or timestamps, and unknown workflow or schedule names.
 
 ## Typed event contracts
 
@@ -93,7 +93,7 @@ Deliveries are **at least once**. The same delivery ID can arrive more than once
 
 Acknowledgement means only that the application received and durably handled a command. If a workflow waits for an external outcome, verify that outcome in the application and then send `signal` with the workflow's exact event and correlation key. Do not treat an acknowledgement as payment, email, or other business completion.
 
-Register handlers before connecting when using Node, and immediately after `Connect` when using Go. An unacknowledged delivery remains eligible for retry.
+Register handlers before connecting when using Node, and immediately after `Connect` when using Go. An unacknowledged delivery remains eligible for retry until its retries run out and it is blocked for an administrator to replay. In Node, a handler that throws or rejects is logged with `console.error` and its delivery is left unacknowledged; it never crashes the process.
 
 ## Idempotency keys
 

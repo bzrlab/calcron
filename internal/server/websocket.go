@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 
@@ -39,7 +40,11 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	}
 	app, admin, err := s.commands.authenticate(ctx, auth.Token)
 	if err != nil {
-		_ = p.send(ctx, reply{ID: auth.ID, Error: "unauthorized"})
+		code := "unavailable"
+		if errors.Is(err, errBadToken) {
+			code = "unauthorized"
+		}
+		_ = p.send(ctx, reply{ID: auth.ID, Error: code})
 		return
 	}
 	p.app, p.admin = app, admin

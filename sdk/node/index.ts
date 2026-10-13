@@ -28,6 +28,7 @@ export type WorkflowResult = { instanceId: string };
 export type SignalResult = { matched: number };
 export type AckResult = { acked: boolean };
 export type Delivery<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = { id: string; data: Events[Name]; ack: () => Promise<AckResult> };
+const REQUEST_TIMEOUT_MS = 10_000;
 type Reply = { id?: string; ok?: boolean; error?: string; op?: string; deliveryId?: string; event?: string; data?: unknown };
 
 export class Calcron<Events extends object = EventMap, Workflows extends object = WorkflowMap> {
@@ -38,11 +39,20 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   private stopped = false;
   private retry = 250;
   private reconnecting = false;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
   private url: string;
   private token: string;
   constructor(url: string, token: string) { this.url = url; this.token = token; }
   async connect() { this.stopped = false; await this.open(); }
-  close() { this.stopped = true; this.ws?.close(); }
+  close() {
+    this.stopped = true;
+    this.reconnecting = false;
+    clearTimeout(this.reconnectTimer);
+    for (const [id, pending] of this.waiting) { this.waiting.delete(id); pending.reject(new Error("Calcron disconnected")); }
+    const ws = this.ws;
+    if (ws) ws.onclose = null;
+    ws?.close();
+  }
   on<Name extends EventName<Events>>(event: Name, handler: (event: Delivery<Events, Name>) => void | Promise<void>) { this.handlers.set(event, handler as (event: Delivery<Events, EventName<Events>>) => void | Promise<void>); }
   set<Name extends EventName<Events>>(schedule: Schedule<Events, Name>) { return this.request<ScheduleResult>({ op: "schedule.set", ...schedule }); }
   throttle<Name extends EventName<Events>>(throttle: Throttle<Events, Name>) { return this.request<ThrottleResult>({ op: "schedule.throttle", ...throttle }); }
@@ -50,8 +60,33 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   extend(key: string, by: string, idempotencyKey: string) { return this.request<Pick<ScheduleResult, "runAt">>({ op: "schedule.extend", key, by, idempotencyKey }); }
   start<Name extends WorkflowName<Workflows>>(name: Name, idempotencyKey: string, ...[data]: PayloadArgument<Workflows[Name]>) { return this.request<WorkflowResult>({ op: "workflow.start", name, data, idempotencyKey }); }
   signal<Name extends EventName<Events>>(event: Name, correlationKey: string, idempotencyKey: string, ...[data]: PayloadArgument<Events[Name]>) { return this.request<SignalResult>({ op: "signal", event, correlationKey, data, idempotencyKey }); }
-  private async open() { this.ws = new WebSocket(this.url); await new Promise<void>((ok, bad) => { this.ws.onopen = () => ok(); this.ws.onerror = () => bad(new Error("Calcron connection failed")); }); this.ws.onmessage = e => this.receive(JSON.parse(e.data)); this.ws.onclose = () => this.lost(); try { await this.request({ op: "auth", token: this.token }); } catch (error) { this.stopped = true; this.ws.close(); throw error; } this.retry = 250; }
-  private request<T>(body: Record<string, unknown>) { const id = String(++this.n); return new Promise<T>((resolve, reject) => { this.waiting.set(id, { resolve: value => resolve(value as T), reject }); if (this.ws.readyState !== WebSocket.OPEN) { this.waiting.delete(id); reject(new Error("Calcron disconnected")); return; } this.ws.send(JSON.stringify({ id, ...body })); }); }
-  private receive(reply: Reply) { if (reply.op === "delivery") { const h = this.handlers.get(reply.event!); if (h) void h({ id: reply.deliveryId!, data: reply.data as Events[EventName<Events>], ack: () => this.request<AckResult>({ op: "delivery.ack", deliveryId: reply.deliveryId, idempotencyKey: `ack:${reply.deliveryId}` }) }); return; } const p = this.waiting.get(reply.id!); if (!p) return; this.waiting.delete(reply.id!); reply.ok ? p.resolve(reply.data) : p.reject(new Error(reply.error ?? "Calcron request failed")); }
-  private lost() { for (const [id, p] of this.waiting) { this.waiting.delete(id); p.reject(new Error("Calcron disconnected")); } if (this.stopped || this.reconnecting) return; this.reconnecting = true; const wait = this.retry; this.retry = Math.min(this.retry * 2, 10_000); setTimeout(() => void this.open().catch(() => {}).finally(() => { this.reconnecting = false; if (!this.stopped && this.ws.readyState !== WebSocket.OPEN) this.lost(); }), wait); }
+  private async open() {
+    if (this.stopped) return;
+    // onclose can set reconnecting before this catch runs. Decide from the value at entry.
+    const reconnecting = this.reconnecting;
+    this.ws = new WebSocket(this.url);
+    await new Promise<void>((ok, bad) => { this.ws.onopen = () => ok(); this.ws.onerror = () => bad(new Error("Calcron connection failed")); });
+    if (this.stopped) { this.ws.close(); return; }
+    this.ws.onmessage = e => { try { this.receive(JSON.parse(e.data)); } catch { this.drop(); } };
+    this.ws.onclose = () => this.lost();
+    try {
+      await this.request({ op: "auth", token: this.token });
+    } catch (error) {
+      if (!reconnecting || (error as Error).message === "unauthorized") {
+        this.stopped = true;
+        this.reconnecting = false;
+        clearTimeout(this.reconnectTimer);
+      }
+      this.drop();
+      throw error;
+    }
+    this.retry = 250;
+  }
+  // A half-open connection never answers and never closes, so every request has a deadline and a missed one drops the connection.
+  private request<T>(body: Record<string, unknown>) { const id = String(++this.n); return new Promise<T>((resolve, reject) => { if (this.ws.readyState !== WebSocket.OPEN) return reject(new Error("Calcron disconnected")); const timer = setTimeout(() => { this.waiting.delete(id); reject(new Error(`Calcron did not answer ${body.op} within ${REQUEST_TIMEOUT_MS / 1000} s`)); if (body.op !== "auth") this.drop(); }, REQUEST_TIMEOUT_MS); this.waiting.set(id, { resolve: value => { clearTimeout(timer); resolve(value as T); }, reject: error => { clearTimeout(timer); reject(error); } }); try { this.ws.send(JSON.stringify({ id, ...body })); } catch (error) { this.waiting.delete(id); clearTimeout(timer); reject(error instanceof Error ? error : new Error("Calcron disconnected")); } }); }
+  // Closing a half-open socket can take minutes to fire onclose, and a late onclose would fail the next connection's requests.
+  private drop() { this.ws.onclose = null; this.ws.close(); this.lost(); }
+  // A failed handler leaves its delivery unacknowledged, so Calcron retries it; the error must not crash the process.
+  private receive(reply: Reply) { if (reply.op === "delivery") { const h = this.handlers.get(reply.event!); if (h) Promise.resolve().then(() => h({ id: reply.deliveryId!, data: reply.data as Events[EventName<Events>], ack: () => this.request<AckResult>({ op: "delivery.ack", deliveryId: reply.deliveryId, idempotencyKey: `ack:${reply.deliveryId}` }) })).catch(error => console.error(`Calcron handler for ${reply.event} failed; delivery ${reply.deliveryId} left unacknowledged:`, error)); return; } const p = this.waiting.get(reply.id!); if (!p) return; this.waiting.delete(reply.id!); reply.ok ? p.resolve(reply.data) : p.reject(new Error(reply.error ?? "Calcron request failed")); }
+  private lost() { for (const [id, p] of this.waiting) { this.waiting.delete(id); p.reject(new Error("Calcron disconnected")); } if (this.stopped || this.reconnecting) return; this.reconnecting = true; const wait = this.retry; this.retry = Math.min(this.retry * 2, 10_000); this.reconnectTimer = setTimeout(() => void this.open().catch(() => {}).finally(() => { this.reconnecting = false; if (!this.stopped && this.ws.readyState !== WebSocket.OPEN) this.lost(); }), wait); }
 }
