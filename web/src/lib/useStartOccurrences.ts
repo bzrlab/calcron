@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAdmin } from "./admin";
 import type { CalendarDefinition } from "./calendar";
+import { useShell } from "./shell";
 
 type Start = { id: string; application_id: string; name: string; workflow_name: string; calendar_name: string; local_time: string; status: string; updated_at: string };
 
@@ -15,15 +16,20 @@ export const startEvent = (s: Start, at: Date) => ({ key: `start:${s.id}:${at.ge
 // ponytail: one request per Start schedule (dashboard.list caps them at 100); batch in one op if that cap grows.
 export function useStartOccurrences<S extends Start>(starts: S[], shown: Date[], version: string, draft?: CalendarDefinition) {
   const { send } = useAdmin();
+  const { notify } = useShell();
   const [out, setOut] = useState<{ s: S; at: Date }[]>([]);
   const first = shown[0];
   const last = shown[shown.length - 1];
-  const from = new Date(first.getFullYear(), first.getMonth(), first.getDate() - PAD_DAYS);
-  const to = new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1 + PAD_DAYS);
+  const from = first ? new Date(first.getFullYear(), first.getMonth(), first.getDate() - PAD_DAYS) : null;
+  const to = last ? new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1 + PAD_DAYS) : null;
   const firing = starts.filter((s) => s.status !== "broken");
-  const key = `${firing.map((s) => s.id + s.updated_at).join()}|${from.getTime()}|${to.getTime()}|${version}|${JSON.stringify(draft ?? null)}`;
+  const key = `${firing.map((s) => s.id + s.updated_at).join()}|${from?.getTime() ?? "empty"}|${to?.getTime() ?? "empty"}|${version}|${JSON.stringify(draft ?? null)}`;
   useEffect(() => {
     let cancelled = false;
+    if (!from || !to) {
+      setOut([]);
+      return;
+    }
     const at = new Date(Math.max(from.getTime(), Date.now()));
     if (at >= to) {
       setOut([]);
@@ -41,8 +47,10 @@ export function useStartOccurrences<S extends Start>(starts: S[], shown: Date[],
         });
         return r.ok ? r.data.occurrences.map((x) => ({ s, at: new Date(x) })) : [];
       }),
-    ).then((all) => !cancelled && setOut(all.flat()));
+    ).then((all) => !cancelled && setOut(all.flat())).catch((error: unknown) => {
+      if (!cancelled) notify(error instanceof Error ? error.message : "calendar.occurrences failed", false);
+    });
     return () => { cancelled = true; };
-  }, [send, key]);
+  }, [send, key, notify]);
   return out;
 }

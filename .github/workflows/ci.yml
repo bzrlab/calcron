@@ -9,8 +9,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   go:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -41,6 +46,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: examples/bot/package-lock.json
       - run: npm ci && npm test
         working-directory: examples/bot
         env:
@@ -48,12 +55,17 @@ jobs:
           CALCRON_E2E_ADMIN_TOKEN: e2e-admin
 
   node:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            sdk/node/package-lock.json
+            web/package-lock.json
       - run: npm ci
         working-directory: sdk/node
       - run: npm test

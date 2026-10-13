@@ -1,20 +1,32 @@
+const SECOND = 1;
+const MINUTE = 60 * SECOND;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+function compactDuration(s: number, prefix: string, suffix: string): string {
+  if (s < MINUTE) return `${prefix}${s}s${suffix}`;
+  if (s < HOUR) {
+    const minutes = Math.round(s / MINUTE);
+    return minutes >= 60 ? `${prefix}1h${suffix}` : `${prefix}${minutes}m${suffix}`;
+  }
+  if (s < DAY) {
+    const hours = Math.round(s / HOUR);
+    return hours >= 24 ? `${prefix}1d${suffix}` : `${prefix}${hours}h${suffix}`;
+  }
+  return `${prefix}${Math.round(s / DAY)}d${suffix}`;
+}
+
 export function timeAgo(iso?: string | null, now = Date.now()): string {
   if (!iso) return "—";
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return String(iso);
-  const s = Math.round((now - t) / 1000);
+  const s = Math.floor((now - t) / 1000);
   if (s < 0) return inFuture(-s);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
+  return compactDuration(s, "", " ago");
 }
 
 function inFuture(s: number): string {
-  if (s < 60) return `in ${s}s`;
-  if (s < 3600) return `in ${Math.round(s / 60)}m`;
-  if (s < 86400) return `in ${Math.round(s / 3600)}h`;
-  return `in ${Math.round(s / 86400)}d`;
+  return compactDuration(s, "in ", "");
 }
 
 export function fmt(iso?: string | null, timeZone?: string): string {

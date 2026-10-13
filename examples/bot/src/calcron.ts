@@ -64,7 +64,18 @@ export class Admin {
   private waiting = new Map<string, (reply: AdminReply) => void>();
   private constructor(ws: WebSocket) {
     this.ws = ws;
-    ws.onmessage = e => { const reply: AdminReply = JSON.parse(String(e.data)); this.waiting.get(reply.id!)?.(reply); this.waiting.delete(reply.id!); };
+    ws.onmessage = e => {
+      try {
+        const reply: AdminReply = JSON.parse(String(e.data));
+        if (!reply.id) return;
+        this.waiting.get(reply.id)?.(reply);
+        this.waiting.delete(reply.id);
+      } catch {
+        for (const done of this.waiting.values()) done({ error: "Calcron sent an invalid message" });
+        this.waiting.clear();
+        ws.close();
+      }
+    };
     ws.onclose = () => { for (const done of this.waiting.values()) done({ error: "Calcron disconnected" }); this.waiting.clear(); };
   }
   static async connect(to = url, token = env("CALCRON_ADMIN_TOKEN")) {

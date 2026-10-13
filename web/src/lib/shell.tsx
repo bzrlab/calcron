@@ -51,6 +51,8 @@ export function ShellProvider({ defaultView, children }: { defaultView: string; 
   const [apps, setApps] = useState<App[]>([]);
   const toastId = useRef(0);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const toastTimers = useRef(new Map<number, number>());
+  const pendingRef = useRef<ConfirmRequest | null>(null);
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash(location.hash));
@@ -81,7 +83,7 @@ export function ShellProvider({ defaultView, children }: { defaultView: string; 
     if (state !== "open") return;
     void send({ op: "dashboard.list", name: "apps" }).then((r) => {
       if (r.ok) setApps((r.data as App[]) ?? []);
-    });
+    }).catch(() => setApps([]));
   }, [send, state, refresh]);
 
   const names = useMemo(() => new Map(apps.map((a) => [a.id, a.namespace])), [apps]);
@@ -90,17 +92,31 @@ export function ShellProvider({ defaultView, children }: { defaultView: string; 
   const notify = useCallback((text: string, ok = true) => {
     const id = ++toastId.current;
     setToasts((t) => [...t, { id, text, ok }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
+    const timer = window.setTimeout(() => {
+      toastTimers.current.delete(id);
+      setToasts((t) => t.filter((x) => x.id !== id));
+    }, 4000);
+    toastTimers.current.set(id, timer);
   }, []);
 
   const confirm = useCallback(
-    (req: Omit<ConfirmRequest, "resolve">) => new Promise<boolean>((resolve) => setPending({ ...req, resolve })),
+    (req: Omit<ConfirmRequest, "resolve">) => new Promise<boolean>((resolve) => {
+      setPending({ ...req, resolve });
+    }),
     [],
   );
 
   useEffect(() => {
-    if (pending) dialogRef.current?.showModal();
+    const previous = pendingRef.current;
+    pendingRef.current = pending;
+    if (previous && previous !== pending) previous.resolve(false);
+    if (pending && !dialogRef.current?.open) dialogRef.current?.showModal();
   }, [pending]);
+
+  useEffect(() => () => {
+    for (const timer of toastTimers.current.values()) window.clearTimeout(timer);
+    pendingRef.current?.resolve(false);
+  }, []);
 
   function answer(yes: boolean) {
     pending?.resolve(yes);

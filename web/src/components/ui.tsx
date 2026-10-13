@@ -2,14 +2,21 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useAdmin } from "../lib/admin";
 import { useShell } from "../lib/shell";
 import { fmt } from "../lib/format";
+import { stringifyJson } from "../components/Json";
+
+const safeJson = (value: unknown) => stringifyJson(value);
 
 export function IdChip({ value, onOpen }: { value: string; onOpen?: () => void }) {
   const [copied, setCopied] = useState(false);
   async function copy(e: React.MouseEvent) {
     e.stopPropagation();
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
   }
   const label = value.length > 12 ? `${value.slice(0, 10)}…` : value;
   return (
@@ -109,7 +116,8 @@ export function SubjectHistory({ type, id }: { type: string; id: string }) {
   useEffect(() => {
     void send({ op: "dashboard.list", name: "history", subjectType: type, subjectId: id }).then((r) => {
       if (r.ok) setRows(((r.data as HistoryRow[]) ?? []).slice().reverse());
-    });
+      else setRows([]);
+    }).catch(() => setRows([]));
   }, [send, type, id, refresh]);
   if (!rows) return <span className="loading loading-spinner loading-sm" />;
   if (rows.length === 0) return <p className="text-sm text-base-content/50">No history.</p>;
@@ -123,7 +131,7 @@ export function SubjectHistory({ type, id }: { type: string; id: string }) {
             <span className="text-xs text-base-content/50">{fmt(h.created_at)}</span>
           </div>
           {h.data != null && Object.keys(h.data as object).length > 0 && (
-            <pre className="mt-1 max-h-40 overflow-auto rounded bg-base-300 p-2 text-xs">{JSON.stringify(h.data, null, 2)}</pre>
+            <pre className="mt-1 max-h-40 overflow-auto rounded bg-base-300 p-2 text-xs">{safeJson(h.data)}</pre>
           )}
         </li>
       ))}
@@ -143,7 +151,7 @@ export function Section({ title, children }: { title: string; children: ReactNod
 export function Pre({ value }: { value: unknown }) {
   return (
     <pre className="max-h-64 overflow-auto rounded-box bg-base-300 p-3 text-xs leading-relaxed">
-      {JSON.stringify(value ?? null, null, 2)}
+      {safeJson(value ?? null)}
     </pre>
   );
 }

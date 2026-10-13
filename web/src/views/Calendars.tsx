@@ -209,6 +209,8 @@ function NextDays({ definition }: { definition: Definition }) {
     const until = new Date(at.getTime() + 365 * 86_400_000);
     void send({ op: "calendar.occurrences", data: definition, localTime, at: at.toISOString(), until: until.toISOString() }).then((r) => {
       if (!cancelled) setRuns(r.ok ? r.data.occurrences.slice(0, 5) : r.error);
+    }).catch((error) => {
+      if (!cancelled) setRuns(error instanceof Error ? error.message : "calendar.occurrences failed");
     });
     return () => { cancelled = true; };
   }, [send, key, localTime]);

@@ -66,7 +66,11 @@ export class AdminClient {
     this.onState?.("connecting");
     this.ws = new WebSocket(this.url);
     return new Promise<void>((resolve, reject) => {
-      const ws = this.ws!;
+      const ws = this.ws;
+      if (!ws) {
+        reject(new Error("Calcron connection failed"));
+        return;
+      }
       ws.onopen = () => {
         this.request({ op: "auth", token: this.token })
           .then((r) => {
@@ -81,7 +85,14 @@ export class AdminClient {
           .catch(reject);
       };
       ws.onerror = () => reject(new Error("Calcron connection failed"));
-      ws.onmessage = (e) => this.receive(JSON.parse(e.data as string));
+      ws.onmessage = (e) => {
+        try {
+          this.receive(JSON.parse(String(e.data)) as Reply | DeliveryPush);
+        } catch {
+          this.failPending(new Error("Calcron sent an invalid message"));
+          this.close();
+        }
+      };
       ws.onclose = () => {
         this.failPending(new Error("Calcron disconnected"));
         this.onState?.("closed");
@@ -90,8 +101,10 @@ export class AdminClient {
   }
 
   close() {
-    this.ws?.close();
+    this.failPending(new Error("Calcron disconnected"));
+    const ws = this.ws;
     this.ws = null;
+    ws?.close();
   }
 
   // request sends one admin frame and resolves with the reply. `data` carries the
@@ -122,7 +135,9 @@ export class AdminClient {
         },
       });
       try {
-        this.ws.send(JSON.stringify({ id, ...body }));
+        const ws = this.ws;
+        if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error("Calcron disconnected");
+        ws.send(JSON.stringify({ id, ...body }));
       } catch (e) {
         // The socket can close between the readyState check above and send.
         clearTimeout(timer);

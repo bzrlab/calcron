@@ -25,7 +25,7 @@ export function CommandPalette({ nav }: { nav: { key: string; label: string }[] 
         if (r.ok) next[SEARCHED[i]] = (r.data as { id?: unknown }[]) ?? [];
       });
       setLists(next);
-    });
+    }).catch(() => setLists({}));
   }
 
   useEffect(() => {

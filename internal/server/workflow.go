@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"sync"
 	"time"
 
 	"github.com/bzrlab/calcron/internal/workflow"
 	"github.com/google/cel-go/cel"
+	"github.com/jackc/pgx/v5"
 )
 
 type workflowDefinition = workflow.Definition
@@ -24,7 +26,9 @@ func compileCEL(expr string) (cel.Program, error) {
 // ponytail: programs are cached per expression for the process lifetime; published versions are immutable and few.
 var celPrograms sync.Map
 
-func evalCEL(expr string, input, state map[string]any) (any, error) {
+const workflowStepBudget = 100
+
+func evalCEL(ctx context.Context, expr string, input, state map[string]any) (any, error) {
 	p, cached := celPrograms.Load(expr)
 	if !cached {
 		compiled, err := compileCEL(expr)
@@ -33,7 +37,7 @@ func evalCEL(expr string, input, state map[string]any) (any, error) {
 		}
 		p, _ = celPrograms.LoadOrStore(expr, compiled)
 	}
-	out, _, err := p.(cel.Program).Eval(map[string]any{"input": input, "state": state})
+	out, _, err := p.(cel.Program).ContextEval(ctx, map[string]any{"input": input, "state": state})
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +128,10 @@ func (s *Server) signal(ctx context.Context, app string, f frame) reply {
 			ids = append(ids, id)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fail(err.Error())
+	}
 	rows.Close()
 	r := ok(map[string]int{"matched": len(ids)})
 	tx, e := s.db.Begin(ctx)
@@ -144,7 +152,7 @@ func (s *Server) signal(ctx context.Context, app string, f frame) reply {
 }
 func (e *workflowEngine) run(ctx context.Context, id string) {
 	s := e.server
-	for n := 0; n < 100; n++ {
+	for n := 0; n < workflowStepBudget; n++ {
 		tx, e := s.db.Begin(ctx)
 		if e != nil {
 			return
@@ -198,7 +206,7 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 			} else {
 				key := st.Correlation
 				if st.CorrelationExpr != "" {
-					out, ce := evalCEL(st.CorrelationExpr, in, state)
+					out, ce := evalCEL(ctx, st.CorrelationExpr, in, state)
 					if ce != nil {
 						fault = ce
 						break
@@ -214,7 +222,7 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 				stop = true
 			}
 		case "branch":
-			out, ce := evalCEL(st.When, in, state)
+			out, ce := evalCEL(ctx, st.When, in, state)
 			if ce != nil {
 				fault = ce
 				break
@@ -232,7 +240,7 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 		case "emit":
 			data := st.Data
 			if st.DataExpr != "" {
-				out, ce := evalCEL(st.DataExpr, in, state)
+				out, ce := evalCEL(ctx, st.DataExpr, in, state)
 				if ce != nil {
 					fault = ce
 					break
@@ -273,19 +281,68 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 			return
 		}
 	}
+	if !failWorkflowBudget(ctx, s, id) {
+		e.retryBudget(id)
+	}
 }
+
+func failWorkflowBudget(ctx context.Context, s *Server, id string) bool {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		log.Printf("workflow %s budget: %v", id, err)
+		return false
+	}
+	defer tx.Rollback(ctx)
+	var app, state string
+	err = tx.QueryRow(ctx, `select application_id,current_state from workflow_instances where id=$1 and status='running' for update`, id).Scan(&app, &state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true
+	}
+	if err != nil {
+		log.Printf("workflow %s budget: %v", id, err)
+		return false
+	}
+	if _, err = tx.Exec(ctx, `update workflow_instances set status='failed',updated_at=now() where id=$1`, id); err != nil {
+		log.Printf("workflow %s budget: %v", id, err)
+		return false
+	}
+	if _, err = tx.Exec(ctx, `insert into history(application_id,subject_type,subject_id,event,data) values($1,'workflow',$2,'failed',$3)`, app, id, mustJSON(map[string]string{"state": state, "error": "workflow step budget exhausted"})); err != nil {
+		log.Printf("workflow %s budget: %v", id, err)
+		return false
+	}
+	if err = tx.Commit(ctx); err != nil {
+		log.Printf("workflow %s budget: %v", id, err)
+		return false
+	}
+	return true
+}
+
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 func (e *workflowEngine) wake(ctx context.Context) {
 	s := e.server
+	for _, id := range e.takeBudget() {
+		if !failWorkflowBudget(ctx, s, id) {
+			e.retryBudget(id)
+		}
+	}
 	rows, err := s.db.Query(ctx, `update workflow_instances set status='running',updated_at=now() where id in (select id from workflow_instances where status='waiting_time' and wake_at<=now() limit 100 for update skip locked) returning id`)
 	if err != nil {
 		return
 	}
 	defer rows.Close()
+	var ids []string
 	for rows.Next() {
 		var id string
 		if rows.Scan(&id) == nil {
-			e.run(ctx, id)
+			ids = append(ids, id)
 		}
+	}
+	if err = rows.Err(); err != nil {
+		log.Printf("workflow wake: %v", err)
+		return
+	}
+	rows.Close()
+	for _, id := range ids {
+		e.run(ctx, id)
 	}
 }

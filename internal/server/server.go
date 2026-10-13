@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/bzrlab/calcron/internal/application"
@@ -37,6 +38,9 @@ type Server struct {
 	calendars      *calendar.Module
 	schedules      *schedule.Module
 	deliveryAdmin  *delivery.Admin
+	cancel         context.CancelFunc
+	done           chan struct{}
+	closeOnce      sync.Once
 }
 
 func New(ctx context.Context, c Config) (*Server, error) {
@@ -59,11 +63,23 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	s.calendars = calendar.New(db)
 	s.schedules = schedule.New(db, s.calendars, random, s.startWorkflow)
 	s.deliveryAdmin = delivery.NewAdmin(db)
-	go s.loop(ctx)
+	loopCtx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
+	s.done = make(chan struct{})
+	go func() {
+		defer close(s.done)
+		s.loop(loopCtx)
+	}()
 	return s, nil
 }
 
-func (s *Server) Close() { s.db.Close() }
+func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		s.cancel()
+		<-s.done
+		s.db.Close()
+	})
+}
 
 func (s *Server) ListenAndServe(addr string) error { return http.ListenAndServe(addr, s.Handler()) }
 
@@ -87,6 +103,7 @@ func (s *Server) loop(ctx context.Context) {
 			s.deliver(ctx)
 			s.workflows.wake(ctx)
 			s.schedules.StartRecurring(ctx)
+			s.cleanupExpiredThrottles(ctx)
 		}
 	}
 }
@@ -97,4 +114,8 @@ func random() string {
 		log.Panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+func (s *Server) cleanupExpiredThrottles(ctx context.Context) {
+	_, _ = s.db.Exec(ctx, `delete from throttles where until_at <= now()`)
 }

@@ -1,5 +1,6 @@
 .git
-web/node_modules
-sdk/node/node_modules
+**/node_modules
+**/dist
 internal/server/dashboard/dist
 .env
+.env.*
