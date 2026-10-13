@@ -158,6 +158,16 @@ test("leaves a delivery unacknowledged when its handler fails, without crashing 
   client.close();
 });
 
+test("rejects a request when send throws", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.send = () => { throw new Error("socket dead"); };
+  await assert.rejects(client.cancel("invoice:42", "cancel:invoice:42:v1"), /socket dead/);
+  t.mock.timers.tick(10_000);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 1, "timer dropped the connection");
+});
+
 test("rejects an in-flight request when closed", async t => {
   const { client, socket } = await connected();
   t.mock.timers.enable({ apis: ["setTimeout"] });
