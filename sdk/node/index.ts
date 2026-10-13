@@ -67,7 +67,7 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
     this.ws = new WebSocket(this.url);
     await new Promise<void>((ok, bad) => { this.ws.onopen = () => ok(); this.ws.onerror = () => bad(new Error("Calcron connection failed")); });
     if (this.stopped) { this.ws.close(); return; }
-    this.ws.onmessage = e => this.receive(JSON.parse(e.data));
+    this.ws.onmessage = e => { try { this.receive(JSON.parse(e.data)); } catch { this.drop(); } };
     this.ws.onclose = () => this.lost();
     try {
       await this.request({ op: "auth", token: this.token });

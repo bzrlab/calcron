@@ -158,6 +158,19 @@ test("leaves a delivery unacknowledged when its handler fails, without crashing 
   client.close();
 });
 
+test("drops the socket when Calcron sends invalid JSON", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.onmessage?.({ data: "not-json" });
+  await settle();
+  assert.equal(socket.onclose, null);
+  assert.equal(socket.readyState, 3);
+  t.mock.timers.tick(250);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 2, "did not reconnect");
+  client.close();
+});
+
 test("rejects a request when send throws", async t => {
   const { client, socket } = await connected();
   t.mock.timers.enable({ apis: ["setTimeout"] });
