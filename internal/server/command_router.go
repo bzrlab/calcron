@@ -6,8 +6,12 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// errBadToken is the only authentication failure an SDK may treat as final; anything else is worth retrying.
+var errBadToken = errors.New("bad token")
 
 type commandRouter struct{ server *Server }
 
@@ -20,12 +24,15 @@ func (r *commandRouter) authenticate(ctx context.Context, token string) (string,
 	}
 	parts := strings.Split(token, "_")
 	if len(parts) != 3 || parts[0] != "cc" {
-		return "", false, errors.New("bad token")
+		return "", false, errBadToken
 	}
 	var app, hash string
 	err := s.db.QueryRow(ctx, `select t.application_id,t.secret_hash from application_tokens t where t.id=$1 and t.revoked_at is null`, parts[1]).Scan(&app, &hash)
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(parts[2])) != nil {
-		return "", false, errors.New("bad token")
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && bcrypt.CompareHashAndPassword([]byte(hash), []byte(parts[2])) != nil {
+		return "", false, errBadToken
+	}
+	if err != nil {
+		return "", false, err
 	}
 	return app, false, nil
 }

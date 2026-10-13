@@ -1,6 +1,6 @@
 {
   "name": "@bzrlab/calcron",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Node.js and TypeScript client for Calcron",
   "license": "MIT",
   "repository": {

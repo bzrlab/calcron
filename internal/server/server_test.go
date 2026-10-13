@@ -648,6 +648,32 @@ func waitForDeliveryAttempts(t *testing.T, ctx context.Context, admin *websocket
 	return nil
 }
 
+func TestAuthenticationWithoutDatabaseIsNotUnauthorized(t *testing.T) {
+	db := os.Getenv("CALCRON_TEST_DATABASE_URL")
+	if db == "" {
+		t.Skip("CALCRON_TEST_DATABASE_URL required")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := server.New(ctx, server.Config{DatabaseURL: db, AdminToken: "test-admin", Migration: calcron.InitialMigration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := httptest.NewServer(s.Handler())
+	defer h.Close()
+	dialUnauthorized(t, ctx, h.URL, "cc_missing_secret")
+	s.Close()
+	c, _, err := websocket.Dial(ctx, "ws"+h.URL[4:]+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	write(t, ctx, c, map[string]string{"op": "auth", "token": "cc_missing_secret"})
+	if got := read(t, ctx, c); got["error"] != "unavailable" {
+		t.Fatalf("auth without database: %#v", got)
+	}
+}
+
 func dialUnauthorized(t *testing.T, ctx context.Context, rawURL, token string) {
 	t.Helper()
 	c, _, err := websocket.Dial(ctx, "ws"+rawURL[4:]+"/ws", nil)
@@ -707,7 +733,6 @@ func read(t *testing.T, ctx context.Context, c *websocket.Conn) map[string]any {
 	}
 	return v
 }
-
 
 // Deliveries for applications with no connected peer must not occupy claim slots,
 // or they starve every connected application once they exceed the batch limit.
@@ -798,13 +823,18 @@ func TestUnresolvableStartSchedulesRetireInsteadOfStarving(t *testing.T) {
 	if got := waitForWorkflowCount(t, ctx, admin, appID, "healthy-run", 1); got != 1 {
 		t.Fatalf("healthy-run instances = %d, want 1", got)
 	}
-	broken := 0
-	for _, row := range dashboardRows(t, ctx, admin, "start_schedules") {
-		if row["status"] == "broken" {
-			broken++
+	// The start-schedule list sorts broken rows last and keeps 100, so a batch of 300
+	// retired rows is invisible there. History for this application records each retirement.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, row := range listRows(t, ctx, admin, map[string]any{"name": "history", "subjectType": "start_schedule", "applicationId": appID}) {
+			if row["event"] == "broken" {
+				return
+			}
 		}
-	}
-	if broken == 0 {
-		t.Fatal("no start schedule retired after its calendar became unresolvable")
+		if time.Now().After(deadline) {
+			t.Fatal("no start schedule retired after its calendar became unresolvable")
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
