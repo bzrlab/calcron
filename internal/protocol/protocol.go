@@ -27,6 +27,8 @@ type Frame struct {
 	LocalTime      string          `json:"localTime,omitempty"`
 	MissedPolicy   string          `json:"missedPolicy,omitempty"`
 	DeliveryID     string          `json:"deliveryId,omitempty"`
+	URL            string          `json:"url,omitempty"`
+	Secret         string          `json:"secret,omitempty"`
 	TokenID        string          `json:"tokenId,omitempty"`
 	SubjectType    string          `json:"subjectType,omitempty"`
 	SubjectID      string          `json:"subjectId,omitempty"`

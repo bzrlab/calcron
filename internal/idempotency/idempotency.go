@@ -38,6 +38,10 @@ func Serial(ctx context.Context, db *pgxpool.Pool, app, key string, run func() p
 }
 
 func RememberTx(ctx context.Context, tx pgx.Tx, app, key string, response protocol.Reply) error {
+	// Delivery acknowledgement from an HTTP callback has no application idempotency key.
+	if key == "" {
+		return nil
+	}
 	body, _ := json.Marshal(response)
 	_, err := tx.Exec(ctx, `insert into idempotency(application_id,key,response) values($1,$2,$3)`, app, key, body)
 	return err

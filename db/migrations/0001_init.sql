@@ -196,3 +196,7 @@ do $$ begin
     alter table workflow_instances add constraint workflow_instances_status_check check (status in ('running','waiting_time','waiting_signal','waiting_ack','completed','cancelled','failed'));
   end if;
 end $$;
+
+-- Presented on each Delivery, so this secret cannot be one-way hashed the way tokens are.
+alter table applications add column if not exists callback_url text;
+alter table applications add column if not exists callback_secret text;
