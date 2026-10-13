@@ -8,7 +8,7 @@ Node schema and Go generic event declarations.
 | Guarantee | Test | Result |
 | --- | --- | --- |
 | Node client sends every application command, including throttle, and returns typed replies | `sdk/node/index.test.ts` | PASS |
-| Node client rejects bad credentials, exposes delivery acknowledgement, protocol errors, out-of-order replies, duplicate deliveries, and reconnects | `sdk/node/index.test.ts` | PASS |
+| Node client rejects bad credentials, exposes delivery acknowledgement, protocol errors, out-of-order replies, duplicate deliveries, request timeouts, failing handlers, and reconnects (including after a lost re-authentication, and not after `close`) | `sdk/node/index.test.ts` | PASS |
 | Go client sends every application command, validates deadline input, serializes chains, decodes typed results, acknowledges delivery, reconnects, and rejects bad credentials | `sdk/go/client_test.go` | PASS |
 | The Node package exposes an ESM build and declarations; the guide covers the public contract | `npm pack --dry-run`, `scripts/check-sdk-docs.mjs` | PASS |
 | Typed Node schemas reject unknown, mismatched, missing, and chained event/workflow payloads at compile time | `sdk/node/typecheck.test.ts` | PASS |

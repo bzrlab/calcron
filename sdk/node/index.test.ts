@@ -113,6 +113,16 @@ test("correlates replies that arrive out of order", async () => {
   client.close();
 });
 
+test("times out a request that gets no reply", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.respond = () => {};
+  const cancel = client.cancel("invoice:42", "cancel:invoice:42:v1");
+  t.mock.timers.tick(10_000);
+  await assert.rejects(cancel, /Calcron did not answer schedule\.cancel within 10 s/);
+  client.close();
+});
+
 test("delivers duplicate delivery IDs to an idempotent handler", async () => {
   const { client, socket } = await connected();
   const ids: string[] = [];
@@ -121,6 +131,24 @@ test("delivers duplicate delivery IDs to an idempotent handler", async () => {
   socket.reply({ op: "delivery", deliveryId: "d-1", event: "invoice.due", data: {} });
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(ids, ["d-1", "d-1"]);
+  client.close();
+});
+
+test("leaves a delivery unacknowledged when its handler fails, without crashing the process", async t => {
+  const { client, socket } = await connected();
+  const logged = t.mock.method(console, "error", () => {});
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  t.after(() => process.off("unhandledRejection", onUnhandled));
+  client.on("invoice.due", async () => { throw new Error("database down"); });
+  client.on("invoice.overdue", () => { throw new Error("bad payload"); });
+  socket.reply({ op: "delivery", deliveryId: "d-1", event: "invoice.due", data: {} });
+  socket.reply({ op: "delivery", deliveryId: "d-2", event: "invoice.overdue", data: {} });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(unhandled, []);
+  assert.equal(socket.sent.some(frame => frame.op === "delivery.ack"), false);
+  assert.equal(logged.mock.callCount(), 2);
   client.close();
 });
 
@@ -146,6 +174,26 @@ test("reconnects after a transport loss", async () => {
     check();
   });
   client.close();
+});
+
+test("stays closed when closed while waiting to reconnect", async () => {
+  const { client, socket } = await connected();
+  socket.close();
+  client.close();
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(FakeWebSocket.connections.length, 1, "reconnected after close");
+});
+
+test("keeps reconnecting when the connection drops during re-authentication", async () => {
+  const { client, socket } = await connected();
+  FakeWebSocket.onCreate = reconnecting => {
+    if (FakeWebSocket.connections.length === 2) reconnecting.respond = () => reconnecting.close();
+  };
+  socket.close();
+  const deadline = Date.now() + 2_000;
+  while (FakeWebSocket.connections.length < 3 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  client.close();
+  assert.equal(FakeWebSocket.connections.length, 3, "gave up reconnecting");
 });
 
 test("stops and closes when authentication fails during reconnect", async () => {
