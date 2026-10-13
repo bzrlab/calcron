@@ -107,6 +107,18 @@ export class AdminClient {
     ws?.close();
   }
 
+  // A half-open socket never answers and never closes. Drop it so a late
+  // close cannot fail the next connection, and tell the shell to reconnect.
+  private drop() {
+    const ws = this.ws;
+    if (!ws) return;
+    this.ws = null;
+    ws.onclose = null;
+    this.failPending(new Error("Calcron disconnected"));
+    ws.close();
+    this.onState?.("closed");
+  }
+
   // request sends one admin frame and resolves with the reply. `data` carries the
   // op payload (definition, calendar, etc.); `idempotencyKey` is not required for
   // admin ops but is forwarded when present.
@@ -123,6 +135,7 @@ export class AdminClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`timeout: ${body.op}`));
+        this.drop();
       }, timeoutMs);
       this.pending.set(id, {
         resolve: (r) => {
