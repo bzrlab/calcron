@@ -13,6 +13,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// recurrence is the clock rule stored on a direct Schedule. Every is a whole
+// number of minutes aligned to UTC. Daily is a clock time in an IANA timezone.
+type recurrence struct {
+	Every    string `json:"every,omitempty"`
+	Daily    string `json:"daily,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
+}
+
 type Module struct {
 	db            *pgxpool.Pool
 	calendars     *calendar.Module
@@ -31,15 +39,91 @@ func New(db *pgxpool.Pool, calendars *calendar.Module, newID func() string, star
 	return &Module{db: db, calendars: calendars, newID: newID, startWorkflow: startWorkflow}
 }
 
-func deadline(f protocol.Frame) (time.Time, error) {
+func deadline(f protocol.Frame) (time.Time, []byte, error) {
+	modes := 0
 	if f.After != "" {
-		duration, err := time.ParseDuration(f.After)
-		return time.Now().UTC().Add(duration), err
+		modes++
 	}
 	if f.At != "" {
-		return time.Parse(time.RFC3339, f.At)
+		modes++
 	}
-	return time.Time{}, errors.New("after or at required")
+	if f.Every != "" {
+		modes++
+	}
+	if f.Daily != "" {
+		modes++
+	}
+	if f.Timezone != "" && f.Daily == "" {
+		return time.Time{}, nil, errors.New("timezone requires daily")
+	}
+	if modes > 1 {
+		return time.Time{}, nil, errors.New("exactly one of after, at, every, or daily")
+	}
+	if f.After != "" {
+		duration, err := time.ParseDuration(f.After)
+		return time.Now().UTC().Add(duration), nil, err
+	}
+	if f.At != "" {
+		at, err := time.Parse(time.RFC3339, f.At)
+		return at, nil, err
+	}
+	if f.Every != "" || f.Daily != "" {
+		raw, err := json.Marshal(recurrence{Every: f.Every, Daily: f.Daily, Timezone: f.Timezone})
+		if err != nil {
+			return time.Time{}, nil, err
+		}
+		next, err := nextOccurrence(time.Now().UTC(), raw)
+		return next, raw, err
+	}
+	return time.Time{}, nil, errors.New("after or at required")
+}
+
+func nextOccurrence(from time.Time, raw []byte) (time.Time, error) {
+	var rule recurrence
+	if err := json.Unmarshal(raw, &rule); err != nil {
+		return time.Time{}, errors.New("invalid recurrence")
+	}
+	if rule.Every != "" {
+		every, err := time.ParseDuration(rule.Every)
+		if err != nil || every < time.Minute || every%time.Minute != 0 {
+			return time.Time{}, errors.New("every must be whole minutes")
+		}
+		step := every.Nanoseconds()
+		next := (from.UnixNano()/step + 1) * step
+		return time.Unix(0, next).UTC(), nil
+	}
+	if rule.Daily != "" {
+		return nextDaily(from, rule.Daily, rule.Timezone)
+	}
+	return time.Time{}, errors.New("invalid recurrence")
+}
+
+func nextDaily(from time.Time, clock, timezone string) (time.Time, error) {
+	if timezone == "" {
+		return time.Time{}, errors.New("timezone required")
+	}
+	if len(clock) != 5 || clock[2] != ':' {
+		return time.Time{}, errors.New("invalid daily")
+	}
+	hour, hourErr := time.Parse("15:04", clock)
+	if hourErr != nil {
+		return time.Time{}, errors.New("invalid daily")
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Time{}, errors.New("invalid timezone")
+	}
+	local := from.In(loc)
+	y, m, d := local.Date()
+	// ponytail: three days covers a DST gap. A zone that skips this clock all year needs a real calendar.
+	for i := 0; i < 3; i++ {
+		candidate := time.Date(y, m, d+i, hour.Hour(), hour.Minute(), 0, 0, loc)
+		shown := candidate.In(loc)
+		if candidate.After(from) && shown.Hour() == hour.Hour() && shown.Minute() == hour.Minute() {
+			return candidate.UTC(), nil
+		}
+	}
+	return time.Time{}, errors.New("invalid daily")
 }
 
 func ParseChain(raw json.RawMessage) (Chain, error) {
@@ -67,7 +151,7 @@ func (m *Module) Set(ctx context.Context, app string, f protocol.Frame) protocol
 	if _, err := ParseChain(f.Chain); err != nil {
 		return fail(err.Error())
 	}
-	runAt, err := deadline(f)
+	runAt, recurrence, err := deadline(f)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -81,7 +165,7 @@ func (m *Module) Set(ctx context.Context, app string, f protocol.Frame) protocol
 	}
 	defer tx.Rollback(ctx)
 	var scheduleID string
-	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain) values($1,$2,$3,$4,$5,$6,'scheduled',$7) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, runAt, f.Chain).Scan(&scheduleID)
+	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain,recurrence) values($1,$2,$3,$4,$5,$6,'scheduled',$7,$8) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,recurrence=excluded.recurrence,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, runAt, f.Chain, recurrence).Scan(&scheduleID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -224,7 +308,7 @@ func (m *Module) SetAfterTx(ctx context.Context, tx pgx.Tx, app string, f protoc
 		payload = []byte(`{}`)
 	}
 	var scheduleID string
-	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain) values($1,$2,$3,$4,$5,now()+$7::interval,'scheduled',$6) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, f.Chain, delay.String()).Scan(&scheduleID)
+	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain,recurrence) values($1,$2,$3,$4,$5,now()+$7::interval,'scheduled',$6,null) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,recurrence=null,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, f.Chain, delay.String()).Scan(&scheduleID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -232,6 +316,26 @@ func (m *Module) SetAfterTx(ctx context.Context, tx pgx.Tx, app string, f protoc
 		return fail(err.Error())
 	}
 	return ok(nil)
+}
+
+// AdvanceRecurrence arms the next clock occurrence on the same Schedule after
+// its Delivery is acknowledged. A Schedule without a recurrence stays delivered.
+func (m *Module) AdvanceRecurrence(ctx context.Context, tx pgx.Tx, scheduleID string) error {
+	var runAt time.Time
+	var raw []byte
+	err := tx.QueryRow(ctx, `select run_at, recurrence from schedules where id=$1`, scheduleID).Scan(&runAt, &raw)
+	if err != nil {
+		return err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	next, err := nextOccurrence(runAt, raw)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `update schedules set run_at=$2, status='scheduled', updated_at=now() where id=$1`, scheduleID, next)
+	return err
 }
 
 func fail(err string) protocol.Reply { return protocol.Reply{Error: err} }
