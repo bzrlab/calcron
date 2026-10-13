@@ -28,6 +28,10 @@ var celPrograms sync.Map
 
 const workflowStepBudget = 100
 
+// A live run() releases its row between steps. Wake reclaims a running row only
+// after this idle gap, which is also how a failed budget write or a restart
+// gets another attempt. ponytail: one second; shorten if recovery must be faster.
+
 func evalCEL(ctx context.Context, expr string, input, state map[string]any) (any, error) {
 	p, cached := celPrograms.Load(expr)
 	if !cached {
@@ -281,9 +285,7 @@ func (e *workflowEngine) run(ctx context.Context, id string) {
 			return
 		}
 	}
-	if !failWorkflowBudget(ctx, s, id) {
-		e.retryBudget(id)
-	}
+	failWorkflowBudget(ctx, s, id)
 }
 
 func failWorkflowBudget(ctx context.Context, s *Server, id string) bool {
@@ -320,12 +322,14 @@ func failWorkflowBudget(ctx context.Context, s *Server, id string) bool {
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 func (e *workflowEngine) wake(ctx context.Context) {
 	s := e.server
-	for _, id := range e.takeBudget() {
-		if !failWorkflowBudget(ctx, s, id) {
-			e.retryBudget(id)
-		}
-	}
-	rows, err := s.db.Query(ctx, `update workflow_instances set status='running',updated_at=now() where id in (select id from workflow_instances where status='waiting_time' and wake_at<=now() limit 100 for update skip locked) returning id`)
+	rows, err := s.db.Query(ctx, `update workflow_instances set status='running',updated_at=now() where id in (
+		select id from workflow_instances
+		where (status='waiting_time' and wake_at<=now())
+		   or (status='running' and updated_at<=now()-interval '1 second')
+		order by (status='running'), wake_at nulls last
+		limit 100
+		for update skip locked
+	) returning id`)
 	if err != nil {
 		return
 	}

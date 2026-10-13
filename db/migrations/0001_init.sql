@@ -130,6 +130,7 @@ create table if not exists workflow_instances (
 );
 create index if not exists workflow_instances_signal_idx on workflow_instances(application_id,waiting_event,correlation_key) where status='waiting_signal';
 create index if not exists workflow_instances_wake_idx on workflow_instances(wake_at) where status='waiting_time';
+create index if not exists workflow_instances_running_idx on workflow_instances(updated_at) where status='running';
 create index if not exists workflow_instances_application_id_idx on workflow_instances(application_id);
 create index if not exists deliveries_workflow_instance_id_idx on deliveries(workflow_instance_id);
 do $$ begin
