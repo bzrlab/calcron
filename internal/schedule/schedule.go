@@ -98,6 +98,28 @@ func nextOccurrence(from time.Time, raw []byte) (time.Time, error) {
 	return time.Time{}, errors.New("invalid recurrence")
 }
 
+// latestDue is the newest occurrence at or before now. from is that occurrence
+// when no later slot is due.
+func latestDue(from time.Time, raw []byte, now time.Time) (time.Time, error) {
+	if from.After(now) {
+		return from, nil
+	}
+	current := from
+	for {
+		next, err := nextOccurrence(current, raw)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if next.After(now) {
+			return current, nil
+		}
+		if !next.After(current) {
+			return time.Time{}, errors.New("recurrence did not advance")
+		}
+		current = next
+	}
+}
+
 func nextDaily(from time.Time, clock, timezone string) (time.Time, error) {
 	if timezone == "" {
 		return time.Time{}, errors.New("timezone required")
@@ -320,10 +342,11 @@ func (m *Module) SetAfterTx(ctx context.Context, tx pgx.Tx, app string, f protoc
 
 // AdvanceRecurrence arms the next clock occurrence on the same Schedule after
 // its Delivery is acknowledged. A Schedule without a recurrence stays delivered.
+// When several later slots are already due, it arms the latest one once.
 func (m *Module) AdvanceRecurrence(ctx context.Context, tx pgx.Tx, scheduleID string) error {
 	var runAt time.Time
 	var raw []byte
-	err := tx.QueryRow(ctx, `select run_at, recurrence from schedules where id=$1`, scheduleID).Scan(&runAt, &raw)
+	err := tx.QueryRow(ctx, `select run_at, recurrence from schedules where id=$1 for update`, scheduleID).Scan(&runAt, &raw)
 	if err != nil {
 		return err
 	}
@@ -334,8 +357,75 @@ func (m *Module) AdvanceRecurrence(ctx context.Context, tx pgx.Tx, scheduleID st
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC()
+	if !next.After(now) {
+		latest, latestErr := latestDue(runAt, raw, now)
+		if latestErr != nil {
+			return latestErr
+		}
+		if latest.After(runAt) {
+			next = latest
+		} else if next, err = nextOccurrence(latest, raw); err != nil {
+			return err
+		}
+	}
 	_, err = tx.Exec(ctx, `update schedules set run_at=$2, status='scheduled', updated_at=now() where id=$1`, scheduleID, next)
 	return err
+}
+
+// CollapseMissed keeps one pending Delivery for a recurring Schedule and moves
+// that Schedule to the latest occurrence already due. Earlier missed slots are
+// not delivered.
+func (m *Module) CollapseMissed(ctx context.Context, tx pgx.Tx) error {
+	now := time.Now().UTC()
+	rows, err := tx.Query(ctx, `
+		select s.id, s.run_at, s.recurrence
+		from schedules s
+		where s.status = 'delivered'
+		  and s.recurrence is not null
+		  and exists (
+		    select 1 from deliveries d
+		    where d.schedule_id = s.id and d.status = 'pending'
+		  )
+		order by s.run_at
+		limit 100
+		for update of s skip locked`)
+	if err != nil {
+		return err
+	}
+	type missed struct {
+		id    string
+		runAt time.Time
+		raw   []byte
+	}
+	var pending []missed
+	for rows.Next() {
+		var item missed
+		var raw []byte
+		if rows.Scan(&item.id, &item.runAt, &raw) != nil {
+			continue
+		}
+		item.raw = append([]byte(nil), raw...)
+		pending = append(pending, item)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, item := range pending {
+		latest, latestErr := latestDue(item.runAt, item.raw, now)
+		if latestErr != nil {
+			return latestErr
+		}
+		if latest.Equal(item.runAt) {
+			continue
+		}
+		if _, err = tx.Exec(ctx, `update schedules set run_at=$2, updated_at=now() where id=$1 and status='delivered'`, item.id, latest); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func fail(err string) protocol.Reply { return protocol.Reply{Error: err} }

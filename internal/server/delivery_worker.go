@@ -101,6 +101,9 @@ func (s *Server) makeDue(ctx context.Context) {
 			return
 		}
 	}
+	if err = s.schedules.CollapseMissed(ctx, tx); err != nil {
+		return
+	}
 	_ = tx.Commit(ctx)
 }
 
