@@ -648,6 +648,32 @@ func waitForDeliveryAttempts(t *testing.T, ctx context.Context, admin *websocket
 	return nil
 }
 
+func TestAuthenticationWithoutDatabaseIsNotUnauthorized(t *testing.T) {
+	db := os.Getenv("CALCRON_TEST_DATABASE_URL")
+	if db == "" {
+		t.Skip("CALCRON_TEST_DATABASE_URL required")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := server.New(ctx, server.Config{DatabaseURL: db, AdminToken: "test-admin", Migration: calcron.InitialMigration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := httptest.NewServer(s.Handler())
+	defer h.Close()
+	dialUnauthorized(t, ctx, h.URL, "cc_missing_secret")
+	s.Close()
+	c, _, err := websocket.Dial(ctx, "ws"+h.URL[4:]+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	write(t, ctx, c, map[string]string{"op": "auth", "token": "cc_missing_secret"})
+	if got := read(t, ctx, c); got["error"] != "unavailable" {
+		t.Fatalf("auth without database: %#v", got)
+	}
+}
+
 func dialUnauthorized(t *testing.T, ctx context.Context, rawURL, token string) {
 	t.Helper()
 	c, _, err := websocket.Dial(ctx, "ws"+rawURL[4:]+"/ws", nil)
@@ -707,7 +733,6 @@ func read(t *testing.T, ctx context.Context, c *websocket.Conn) map[string]any {
 	}
 	return v
 }
-
 
 // Deliveries for applications with no connected peer must not occupy claim slots,
 // or they starve every connected application once they exceed the batch limit.

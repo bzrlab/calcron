@@ -41,6 +41,8 @@ function installFakeWebSocket() {
   globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
 }
 
+const settle = () => new Promise(resolve => setImmediate(resolve));
+
 async function connected() {
   installFakeWebSocket();
   const client = new Calcron("ws://calcron.test/ws", "test");
@@ -120,6 +122,10 @@ test("times out a request that gets no reply", async t => {
   const cancel = client.cancel("invoice:42", "cancel:invoice:42:v1");
   t.mock.timers.tick(10_000);
   await assert.rejects(cancel, /Calcron did not answer schedule\.cancel within 10 s/);
+  assert.equal(socket.readyState, 3, "kept the unanswering connection");
+  t.mock.timers.tick(250);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 2, "did not reconnect");
   client.close();
 });
 
@@ -145,7 +151,7 @@ test("leaves a delivery unacknowledged when its handler fails, without crashing 
   client.on("invoice.overdue", () => { throw new Error("bad payload"); });
   socket.reply({ op: "delivery", deliveryId: "d-1", event: "invoice.due", data: {} });
   socket.reply({ op: "delivery", deliveryId: "d-2", event: "invoice.overdue", data: {} });
-  await new Promise(resolve => setTimeout(resolve, 10));
+  await settle();
   assert.deepEqual(unhandled, []);
   assert.equal(socket.sent.some(frame => frame.op === "delivery.ack"), false);
   assert.equal(logged.mock.callCount(), 2);
@@ -176,30 +182,40 @@ test("reconnects after a transport loss", async () => {
   client.close();
 });
 
-test("stays closed when closed while waiting to reconnect", async () => {
+test("stays closed when closed while waiting to reconnect", async t => {
   const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   socket.close();
   client.close();
-  await new Promise(resolve => setTimeout(resolve, 400));
+  t.mock.timers.tick(10_000);
+  await settle();
   assert.equal(FakeWebSocket.connections.length, 1, "reconnected after close");
 });
 
-test("keeps reconnecting when the connection drops during re-authentication", async () => {
-  const { client, socket } = await connected();
-  FakeWebSocket.onCreate = reconnecting => {
-    if (FakeWebSocket.connections.length === 2) reconnecting.respond = () => reconnecting.close();
-  };
-  socket.close();
-  const deadline = Date.now() + 2_000;
-  while (FakeWebSocket.connections.length < 3 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-  client.close();
-  assert.equal(FakeWebSocket.connections.length, 3, "gave up reconnecting");
-});
+for (const [failure, respond] of [
+  ["the connection drops", (socket: FakeWebSocket) => socket.close()],
+  ["Calcron is unavailable", (socket: FakeWebSocket, frame: Frame) => socket.reply({ id: frame.id, ok: false, error: "unavailable" })],
+] as const) {
+  test(`keeps reconnecting when ${failure} during re-authentication`, async t => {
+    const { client, socket } = await connected();
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    FakeWebSocket.onCreate = reconnecting => {
+      if (FakeWebSocket.connections.length === 2) reconnecting.respond = frame => respond(reconnecting, frame);
+    };
+    socket.close();
+    t.mock.timers.tick(250);
+    await settle();
+    t.mock.timers.tick(500);
+    await settle();
+    assert.equal(FakeWebSocket.connections.length, 3, "gave up reconnecting");
+    client.close();
+  });
+}
 
 test("stops and closes when authentication fails during reconnect", async () => {
   const { client, socket } = await connected();
   FakeWebSocket.onCreate = reconnecting => {
-    if (FakeWebSocket.connections.length === 2) reconnecting.respond = frame => reconnecting.reply({ id: frame.id, ok: false, error: "bad token" });
+    if (FakeWebSocket.connections.length === 2) reconnecting.respond = frame => reconnecting.reply({ id: frame.id, ok: false, error: "unauthorized" });
   };
   socket.close();
   await new Promise(resolve => setTimeout(resolve, 300));
