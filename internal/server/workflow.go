@@ -342,8 +342,9 @@ func (e *workflowEngine) wake(ctx context.Context) {
 		}
 	}
 	if err = rows.Err(); err != nil {
+		// The update already committed. Run the ids in hand; the rest stay
+		// running and the next wake reclaims them once they are idle.
 		log.Printf("workflow wake: %v", err)
-		return
 	}
 	rows.Close()
 	for _, id := range ids {
