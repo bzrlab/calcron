@@ -4,9 +4,11 @@ package workflow
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/checker"
 )
 
 type Definition struct {
@@ -30,8 +32,12 @@ type State struct {
 
 func Parse(raw json.RawMessage) (Definition, error) {
 	var definition Definition
-	if json.Unmarshal(raw, &definition) != nil || definition.Initial == "" || definition.States[definition.Initial].Type == "" {
+	if json.Unmarshal(raw, &definition) != nil || definition.Initial == "" {
 		return definition, errors.New("invalid workflow definition")
+	}
+	initial, ok := definition.States[definition.Initial]
+	if !ok || initial.Type == "" {
+		return definition, errors.New("workflow initial state not found")
 	}
 	for name, state := range definition.States {
 		if name == "" {
@@ -90,6 +96,16 @@ func Parse(raw json.RawMessage) (Definition, error) {
 	return definition, nil
 }
 
+const celCostLimit uint64 = 10000
+
+// A nil checker.Cost estimator panics when the expression reads a dyn field.
+type celSizeUnknown struct{}
+
+func (celSizeUnknown) EstimateSize(checker.AstNode) *checker.SizeEstimate { return nil }
+func (celSizeUnknown) EstimateCallCost(string, string, *checker.AstNode, []checker.AstNode) *checker.CallEstimate {
+	return nil
+}
+
 func CompileCEL(expr string) (cel.Program, error) {
 	env, err := cel.NewEnv(cel.Variable("input", cel.DynType), cel.Variable("state", cel.DynType))
 	if err != nil {
@@ -99,5 +115,12 @@ func CompileCEL(expr string) (cel.Program, error) {
 	if issues.Err() != nil {
 		return nil, issues.Err()
 	}
-	return env.Program(ast)
+	estimate, err := checker.Cost(ast.NativeRep(), celSizeUnknown{})
+	if err != nil {
+		return nil, err
+	}
+	if estimate.Min > celCostLimit {
+		return nil, fmt.Errorf("CEL cost %d exceeds limit %d", estimate.Min, celCostLimit)
+	}
+	return env.Program(ast, cel.CostLimit(celCostLimit), cel.InterruptCheckFrequency(100))
 }

@@ -39,6 +39,17 @@ export function useShell(): Ctx {
   return c;
 }
 
+// toastOnce reports a fetch failure once per distinct message and clears on success.
+export function toastOnce(seen: { current: string }, notify: Ctx["notify"], message: string | null) {
+  if (!message) {
+    seen.current = "";
+    return;
+  }
+  if (seen.current === message) return;
+  seen.current = message;
+  notify(message, false);
+}
+
 const POLL_MS = 5000;
 
 export function ShellProvider({ defaultView, children }: { defaultView: string; children: ReactNode }) {
@@ -51,6 +62,9 @@ export function ShellProvider({ defaultView, children }: { defaultView: string; 
   const [apps, setApps] = useState<App[]>([]);
   const toastId = useRef(0);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const toastTimers = useRef(new Map<number, number>());
+  const pendingRef = useRef<ConfirmRequest | null>(null);
+  const appsError = useRef("");
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash(location.hash));
@@ -77,30 +91,51 @@ export function ShellProvider({ defaultView, children }: { defaultView: string; 
     return () => clearInterval(t);
   }, [state, bump]);
 
-  useEffect(() => {
-    if (state !== "open") return;
-    void send({ op: "dashboard.list", name: "apps" }).then((r) => {
-      if (r.ok) setApps((r.data as App[]) ?? []);
-    });
-  }, [send, state, refresh]);
-
   const names = useMemo(() => new Map(apps.map((a) => [a.id, a.namespace])), [apps]);
   const appName = useCallback((id: string) => names.get(id) ?? `${id.slice(0, 8)}…`, [names]);
 
   const notify = useCallback((text: string, ok = true) => {
     const id = ++toastId.current;
     setToasts((t) => [...t, { id, text, ok }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
+    const timer = window.setTimeout(() => {
+      toastTimers.current.delete(id);
+      setToasts((t) => t.filter((x) => x.id !== id));
+    }, 4000);
+    toastTimers.current.set(id, timer);
   }, []);
 
+  useEffect(() => {
+    if (state !== "open") return;
+    void send({ op: "dashboard.list", name: "apps" }).then((r) => {
+      if (r.ok) {
+        toastOnce(appsError, notify, null);
+        setApps((r.data as App[]) ?? []);
+        return;
+      }
+      toastOnce(appsError, notify, r.error ?? "apps failed");
+    }).catch((error: unknown) => {
+      toastOnce(appsError, notify, error instanceof Error ? error.message : "apps failed");
+    });
+  }, [send, state, refresh, notify]);
+
   const confirm = useCallback(
-    (req: Omit<ConfirmRequest, "resolve">) => new Promise<boolean>((resolve) => setPending({ ...req, resolve })),
+    (req: Omit<ConfirmRequest, "resolve">) => new Promise<boolean>((resolve) => {
+      setPending({ ...req, resolve });
+    }),
     [],
   );
 
   useEffect(() => {
-    if (pending) dialogRef.current?.showModal();
+    const previous = pendingRef.current;
+    pendingRef.current = pending;
+    if (previous && previous !== pending) previous.resolve(false);
+    if (pending && !dialogRef.current?.open) dialogRef.current?.showModal();
   }, [pending]);
+
+  useEffect(() => () => {
+    for (const timer of toastTimers.current.values()) window.clearTimeout(timer);
+    pendingRef.current?.resolve(false);
+  }, []);
 
   function answer(yes: boolean) {
     pending?.resolve(yes);

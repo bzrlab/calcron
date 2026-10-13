@@ -282,6 +282,31 @@ func TestWorkflowFailsVisiblyWhenConditionErrors(t *testing.T) {
 	}
 }
 
+func TestWorkflowStepBudgetFailsInstance(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "step-budget")
+	publish(t, ctx, admin, appID, "loop", map[string]any{"initial": "a", "states": map[string]any{
+		"a":   map[string]any{"type": "branch", "when": "true", "true": "b", "false": "end"},
+		"b":   map[string]any{"type": "branch", "when": "true", "true": "a", "false": "end"},
+		"end": map[string]any{"type": "end"},
+	}})
+	app := dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+	write(t, ctx, app, map[string]any{"op": "workflow.start", "name": "loop", "idempotencyKey": "start"})
+	started := read(t, ctx, app)
+	if started["ok"] != true {
+		t.Fatalf("start: %#v", started)
+	}
+	id := started["data"].(map[string]any)["instanceId"]
+	if rows := listRows(t, ctx, admin, map[string]any{"name": "workflows", "applicationId": appID}); len(rows) != 1 || rows[0]["status"] != "failed" {
+		t.Fatalf("instance not failed: %#v", rows)
+	}
+	history := listRows(t, ctx, admin, map[string]any{"name": "history", "subjectType": "workflow", "subjectId": id})
+	if len(history) == 0 || history[0]["event"] != "failed" || history[0]["data"].(map[string]any)["error"] != "workflow step budget exhausted" {
+		t.Fatalf("budget failure not recorded: %#v", history)
+	}
+}
+
 func TestScheduleIdempotencyReturnsOriginalResult(t *testing.T) {
 	ctx, h, admin := testServer(t, 0)
 	_, token := newApp(t, ctx, admin, "idempotency")

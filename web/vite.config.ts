@@ -4,6 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 
 // Build straight into the Go package that embeds it, so `go build` ships the
 // dashboard with no extra copy step.
+const backend = "http://localhost:8080";
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
@@ -13,8 +15,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/ws": { target: "ws://localhost:8080", ws: true },
-      "/health": "http://localhost:8080",
+      "/ws": { target: backend.replace("http", "ws"), ws: true },
+      "/health": backend,
     },
   },
 });

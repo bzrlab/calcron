@@ -23,7 +23,7 @@ PostgreSQL is the sole durable store (ADR-0018). No Redis, broker, or cache laye
 
 ## Queries
 
-- Due work and pending delivery use `for update skip locked` with a `limit`; keep the partial indexes (`schedules_due_idx`, `deliveries_pending_idx`, `deliveries_claim_idx`) aligned with the `where` clause.
+- Due work and pending delivery use `for update skip locked` with a `limit`; keep the partial indexes (`schedules_due_idx`, `deliveries_pending_idx`) aligned with the `where` clause. Delivery claim is a primary-key lookup.
 - Lease claim must be a single `update ... returning` — do not select then update in two round-trips.
 - Idempotency lookup is `primary key (application_id, key)`; the response is stored as `jsonb`.
 - Index any new foreign key you filter on.

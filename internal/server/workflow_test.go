@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	calcron "github.com/bzrlab/calcron"
 )
@@ -96,6 +97,59 @@ func TestWorkflowCELEvaluatesBothBranches(t *testing.T) {
 				t.Fatalf("branch: state=%q status=%q", state, status)
 			}
 		})
+	}
+}
+
+func TestWakeResumesStaleRunningWorkflow(t *testing.T) {
+	ctx, s := workflowTestServer(t)
+	app := workflowTestApp(t, ctx, s)
+	definition := workflowJSON(t, map[string]any{
+		"initial": "a",
+		"states": map[string]any{
+			"a":   map[string]any{"type": "branch", "when": "true", "true": "b", "false": "end"},
+			"b":   map[string]any{"type": "branch", "when": "true", "true": "a", "false": "end"},
+			"end": map[string]any{"type": "end"},
+		},
+	})
+	if got := s.publishWorkflow(ctx, frame{ApplicationID: app, Name: "loop", Data: definition}); !got.OK {
+		t.Fatalf("publish: %#v", got)
+	}
+	fresh, stale := random(), random()
+	const insert = `insert into workflow_instances(id,application_id,workflow_name,workflow_version,input,current_state,status,updated_at) values($1,$2,'loop',1,'{}'::jsonb,'a','running',`
+	if _, err := s.db.Exec(ctx, insert+`now())`, fresh, app); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(ctx, insert+`now()-interval '2 seconds')`, stale, app); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	var freshStatus string
+	if err := s.db.QueryRow(ctx, `select status from workflow_instances where id=$1`, fresh).Scan(&freshStatus); err != nil {
+		t.Fatal(err)
+	}
+	if freshStatus != "running" {
+		t.Fatalf("fresh running instance was reclaimed: %s", freshStatus)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		var status string
+		if err := s.db.QueryRow(ctx, `select status from workflow_instances where id=$1`, stale).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status == "failed" {
+			var event string
+			if err := s.db.QueryRow(ctx, `select data->>'error' from history where subject_type='workflow' and subject_id=$1 and event='failed' limit 1`, stale).Scan(&event); err != nil {
+				t.Fatal(err)
+			}
+			if event != "workflow step budget exhausted" {
+				t.Fatalf("history error %q", event)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stale instance status %s", status)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

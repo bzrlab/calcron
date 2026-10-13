@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAdmin } from "../lib/admin";
-import { useShell } from "../lib/shell";
+import { toastOnce, useShell } from "../lib/shell";
 
 type Stats = {
   scheduled: number;
@@ -18,18 +18,24 @@ const CARDS: { key: keyof Stats; label: string; hint: string; tone: string; view
 
 export function Overview() {
   const { send, state } = useAdmin();
-  const { refresh, markUpdated, go, apps } = useShell();
+  const { refresh, markUpdated, go, apps, notify } = useShell();
   const [stats, setStats] = useState<Stats | null>(null);
+  const statsError = useRef("");
 
   useEffect(() => {
     if (state !== "open") return;
     void send({ op: "dashboard.stats" }).then((r) => {
       if (r.ok) {
+        toastOnce(statsError, notify, null);
         setStats(r.data as Stats);
         markUpdated();
+        return;
       }
+      toastOnce(statsError, notify, r.error ?? "dashboard.stats failed");
+    }).catch((error: unknown) => {
+      toastOnce(statsError, notify, error instanceof Error ? error.message : "dashboard.stats failed");
     });
-  }, [send, state, refresh, markUpdated]);
+  }, [send, state, refresh, markUpdated, notify]);
 
   return (
     <div className="space-y-6">

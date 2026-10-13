@@ -39,7 +39,7 @@ create index if not exists schedules_application_id_idx on schedules(application
 
 create table if not exists deliveries (
   id text primary key,
-  schedule_id text not null references schedules(id),
+  schedule_id text references schedules(id),
   application_id text not null references applications(id),
   event text not null,
   payload jsonb not null,
@@ -52,8 +52,6 @@ create table if not exists deliveries (
   created_at timestamptz not null default now(),
   acked_at timestamptz
 );
-create index if not exists deliveries_pending_idx on deliveries (next_attempt_at) where status = 'pending';
-create index if not exists deliveries_claim_idx on deliveries (next_attempt_at) where status = 'pending' and locked_until is null;
 create index if not exists deliveries_schedule_id_idx on deliveries(schedule_id);
 create index if not exists deliveries_application_id_idx on deliveries(application_id);
 
@@ -66,7 +64,49 @@ create table if not exists history (
   data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
-create index if not exists history_subject_idx on history(subject_type, subject_id, created_at);
+-- Boot executes this file every start. Rebuild only while the key or predicate still differs.
+-- deliveries_claim_idx matched deliveries_pending_idx. Claim is a primary-key lookup, so the extra index is dropped once.
+drop index if exists deliveries_claim_idx;
+do $idx$
+declare
+  spec record;
+  cols text;
+  pred text;
+begin
+  for spec in
+    select * from (values
+      ('deliveries_pending_idx', 'application_id, next_attempt_at', 'status = ''pending''', $ddl$create index if not exists deliveries_pending_idx on deliveries (application_id, next_attempt_at) where status = 'pending'$ddl$),
+      ('history_subject_idx', 'application_id, subject_type, subject_id, created_at', null, $ddl$create index if not exists history_subject_idx on history (application_id, subject_type, subject_id, created_at)$ddl$)
+    ) as wanted(index_name, columns, predicate, ddl)
+  loop
+    select
+      (
+        select string_agg(a.attname, ', ' order by k.ord)
+        from pg_index ix
+        join pg_class ic on ic.oid = ix.indexrelid
+        join pg_namespace n on n.oid = ic.relnamespace
+        cross join lateral unnest(ix.indkey) with ordinality as k(attnum, ord)
+        join pg_attribute a on a.attrelid = ix.indrelid and a.attnum = k.attnum
+        where n.nspname = current_schema() and ic.relname = spec.index_name
+      ),
+      (
+        select pg_get_expr(ix.indpred, ix.indrelid)
+        from pg_index ix
+        join pg_class ic on ic.oid = ix.indexrelid
+        join pg_namespace n on n.oid = ic.relnamespace
+        where n.nspname = current_schema() and ic.relname = spec.index_name
+      )
+    into cols, pred;
+    if cols is distinct from spec.columns
+       or (spec.predicate is null) is distinct from (pred is null)
+       or (spec.predicate is not null and strpos(pred, spec.predicate) = 0)
+    then
+      execute format('drop index if exists %I', spec.index_name);
+      execute spec.ddl;
+    end if;
+  end loop;
+end
+$idx$;
 
 create table if not exists throttles (
   application_id text not null references applications(id),
@@ -74,6 +114,7 @@ create table if not exists throttles (
   until_at timestamptz not null,
   primary key (application_id, throttle_key)
 );
+create index if not exists throttles_expiry_idx on throttles(until_at);
 
 alter table deliveries add column if not exists locked_until timestamptz;
 alter table deliveries add column if not exists lease_owner text;
@@ -108,8 +149,14 @@ create table if not exists workflow_instances (
 );
 create index if not exists workflow_instances_signal_idx on workflow_instances(application_id,waiting_event,correlation_key) where status='waiting_signal';
 create index if not exists workflow_instances_wake_idx on workflow_instances(wake_at) where status='waiting_time';
+create index if not exists workflow_instances_running_idx on workflow_instances(updated_at) where status='running';
 create index if not exists workflow_instances_application_id_idx on workflow_instances(application_id);
 create index if not exists deliveries_workflow_instance_id_idx on deliveries(workflow_instance_id);
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'deliveries_workflow_instance_id_fkey') then
+    alter table deliveries add constraint deliveries_workflow_instance_id_fkey foreign key (workflow_instance_id) references workflow_instances(id);
+  end if;
+end $$;
 
 create table if not exists calendars (
   application_id text not null references applications(id),

@@ -24,7 +24,7 @@ type Instance = {
 
 type Version = { application_id: string; name: string; version: number };
 
-type Filter = "all" | "waiting" | "running" | "completed" | "cancelled";
+type Filter = "all" | "waiting" | "running" | "completed" | "cancelled" | "failed";
 
 function group(status: string): Filter {
   return status.startsWith("waiting_") ? "waiting" : (status as Filter);
@@ -82,7 +82,7 @@ export function Workflows() {
       <Chips<Filter>
         value={filter}
         onChange={setFilter}
-        options={(["all", "waiting", "running", "completed", "cancelled"] as Filter[]).map((f) => ({
+        options={(["all", "waiting", "running", "completed", "failed", "cancelled"] as Filter[]).map((f) => ({
           value: f,
           label: f[0].toUpperCase() + f.slice(1),
           count: counts[f] ?? 0,

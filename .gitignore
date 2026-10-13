@@ -5,3 +5,5 @@ web/node_modules/
 .unlazy/
 .codegraph/
 .env
+.env.*
+!.env.example

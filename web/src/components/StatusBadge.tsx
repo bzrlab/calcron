@@ -1,4 +1,4 @@
-const MAP: Record<string, string> = {
+const MAP: Record<string, string> = Object.freeze({
   scheduled: "badge-info",
   pending: "badge-warning",
   blocked: "badge-error",
@@ -14,10 +14,10 @@ const MAP: Record<string, string> = {
   broken: "badge-error",
   online: "badge-success",
   offline: "badge-ghost",
-};
+});
 
 export function StatusBadge({ value }: { value: string }) {
-  const cls = MAP[value] ?? "badge-ghost";
+  const cls = Object.hasOwn(MAP, value) ? MAP[value] : "badge-ghost";
   return (
     <span className={`badge badge-sm gap-1 font-mono ${cls}`}>
       {value}

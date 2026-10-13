@@ -82,6 +82,10 @@ func (s *Server) makeDue(ctx context.Context) {
 			due = append(due, item)
 		}
 	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return
+	}
 	rows.Close()
 	for _, item := range due {
 		if _, err = tx.Exec(ctx, `update schedules set status='delivered',updated_at=now() where id=$1`, item.id); err == nil {

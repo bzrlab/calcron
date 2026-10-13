@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAdmin } from "../lib/admin";
-import { useShell } from "../lib/shell";
+import { toastOnce, useShell } from "../lib/shell";
 import { findById } from "../lib/dashboard";
 
 const SEARCHED = ["apps", "schedules", "deliveries", "workflows"] as const;
@@ -9,8 +9,9 @@ type Item = { label: string; hint: string; run: () => void };
 
 export function CommandPalette({ nav }: { nav: { key: string; label: string }[] }) {
   const { send } = useAdmin();
-  const { go } = useShell();
+  const { go, notify } = useShell();
   const ref = useRef<HTMLDialogElement>(null);
+  const seen = useRef("");
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [lists, setLists] = useState<Record<string, { id?: unknown }[]>>({});
@@ -20,11 +21,17 @@ export function CommandPalette({ nav }: { nav: { key: string; label: string }[] 
     setActive(0);
     ref.current?.showModal();
     void Promise.all(SEARCHED.map((name) => send({ op: "dashboard.list", name }))).then((replies) => {
-      const next: Record<string, { id?: unknown }[]> = {};
-      replies.forEach((r, i) => {
-        if (r.ok) next[SEARCHED[i]] = (r.data as { id?: unknown }[]) ?? [];
+      const failed = replies.find((r) => !r.ok);
+      toastOnce(seen, notify, failed ? (failed.error ?? "search failed") : null);
+      setLists((prev) => {
+        const next = { ...prev };
+        replies.forEach((r, i) => {
+          if (r.ok) next[SEARCHED[i]] = (r.data as { id?: unknown }[]) ?? [];
+        });
+        return next;
       });
-      setLists(next);
+    }).catch((error: unknown) => {
+      toastOnce(seen, notify, error instanceof Error ? error.message : "search failed");
     });
   }
 

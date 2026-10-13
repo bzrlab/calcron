@@ -18,8 +18,12 @@ function Secret({ label, value }: { label: string; value: string }) {
         <button
           className="btn btn-sm"
           onClick={async () => {
-            await navigator.clipboard.writeText(value);
-            setCopied(true);
+            try {
+              await navigator.clipboard.writeText(value);
+              setCopied(true);
+            } catch {
+              setCopied(false);
+            }
           }}
         >
           {copied ? "Copied ✓" : "Copy"}

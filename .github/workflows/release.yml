@@ -7,11 +7,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     uses: ./.github/workflows/ci.yml
 
   npm:
+    timeout-minutes: 15
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -26,7 +31,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          package-manager-cache: false
+          package-manager-cache: true
       - name: Check version matches tag
         run: test "$(node -p 'require("./package.json").version')" = "${GITHUB_REF_NAME#v}"
       - run: npm ci
@@ -42,6 +47,7 @@ jobs:
           fi
 
   go-proxy:
+    timeout-minutes: 10
     needs: test
     runs-on: ubuntu-latest
     steps:
