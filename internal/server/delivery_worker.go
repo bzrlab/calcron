@@ -39,6 +39,9 @@ func (s *Server) ack(ctx context.Context, app string, f frame) reply {
 				return fail("chain failed")
 			}
 		}
+		if err = s.schedules.AdvanceRecurrence(ctx, tx, *scheduleID); err != nil {
+			return fail(err.Error())
+		}
 	}
 	if workflowID != nil && nextState != nil {
 		if _, err = tx.Exec(ctx, `update workflow_instances set current_state=$2,status='running',updated_at=now() where id=$1 and status='waiting_ack'`, *workflowID, *nextState); err != nil {

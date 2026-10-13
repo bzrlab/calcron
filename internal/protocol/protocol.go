@@ -13,6 +13,9 @@ type Frame struct {
 	Event          string          `json:"event,omitempty"`
 	After          string          `json:"after,omitempty"`
 	At             string          `json:"at,omitempty"`
+	Every          string          `json:"every,omitempty"`
+	Daily          string          `json:"daily,omitempty"`
+	Timezone       string          `json:"timezone,omitempty"`
 	Until          string          `json:"until,omitempty"`
 	By             string          `json:"by,omitempty"`
 	Cooldown       string          `json:"cooldown,omitempty"`
