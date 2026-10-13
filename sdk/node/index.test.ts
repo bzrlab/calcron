@@ -158,6 +158,18 @@ test("leaves a delivery unacknowledged when its handler fails, without crashing 
   client.close();
 });
 
+test("rejects an in-flight request when closed", async t => {
+  const { client, socket } = await connected();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  socket.respond = () => {};
+  const pending = client.cancel("invoice:42", "cancel:invoice:42:v1");
+  client.close();
+  await assert.rejects(pending, /Calcron disconnected/);
+  t.mock.timers.tick(10_000);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 1, "reconnected after close");
+});
+
 test("does not reconnect when the first connection drops during auth", async t => {
   installFakeWebSocket();
   t.mock.timers.enable({ apis: ["setTimeout"] });

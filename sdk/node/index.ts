@@ -44,7 +44,15 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   private token: string;
   constructor(url: string, token: string) { this.url = url; this.token = token; }
   async connect() { this.stopped = false; await this.open(); }
-  close() { this.stopped = true; this.reconnecting = false; clearTimeout(this.reconnectTimer); this.ws?.close(); }
+  close() {
+    this.stopped = true;
+    this.reconnecting = false;
+    clearTimeout(this.reconnectTimer);
+    for (const [id, pending] of this.waiting) { this.waiting.delete(id); pending.reject(new Error("Calcron disconnected")); }
+    const ws = this.ws;
+    if (ws) ws.onclose = null;
+    ws?.close();
+  }
   on<Name extends EventName<Events>>(event: Name, handler: (event: Delivery<Events, Name>) => void | Promise<void>) { this.handlers.set(event, handler as (event: Delivery<Events, EventName<Events>>) => void | Promise<void>); }
   set<Name extends EventName<Events>>(schedule: Schedule<Events, Name>) { return this.request<ScheduleResult>({ op: "schedule.set", ...schedule }); }
   throttle<Name extends EventName<Events>>(throttle: Throttle<Events, Name>) { return this.request<ThrottleResult>({ op: "schedule.throttle", ...throttle }); }
