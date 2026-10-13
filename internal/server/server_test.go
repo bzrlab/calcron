@@ -823,13 +823,18 @@ func TestUnresolvableStartSchedulesRetireInsteadOfStarving(t *testing.T) {
 	if got := waitForWorkflowCount(t, ctx, admin, appID, "healthy-run", 1); got != 1 {
 		t.Fatalf("healthy-run instances = %d, want 1", got)
 	}
-	broken := 0
-	for _, row := range dashboardRows(t, ctx, admin, "start_schedules") {
-		if row["status"] == "broken" {
-			broken++
+	// The start-schedule list sorts broken rows last and keeps 100, so a batch of 300
+	// retired rows is invisible there. History for this application records each retirement.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, row := range listRows(t, ctx, admin, map[string]any{"name": "history", "subjectType": "start_schedule", "applicationId": appID}) {
+			if row["event"] == "broken" {
+				return
+			}
 		}
-	}
-	if broken == 0 {
-		t.Fatal("no start schedule retired after its calendar became unresolvable")
+		if time.Now().After(deadline) {
+			t.Fatal("no start schedule retired after its calendar became unresolvable")
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
