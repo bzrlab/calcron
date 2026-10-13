@@ -194,6 +194,257 @@ func TestHTTPDeliveryDropLeavesPendingAndRetriesSameID(t *testing.T) {
 	waitForApplicationDelivery(t, ctx, admin, appID, first, "acked")
 }
 
+func TestHTTPRefusedCallbackCountsAttemptsAndBlocks(t *testing.T) {
+	retryBase := 20 * time.Millisecond
+	ctx, h, admin := testServer(t, retryBase)
+	appID, token := newApp(t, ctx, admin, "http-refuse")
+	var mu sync.Mutex
+	var ids []string
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Errorf("body")
+			return
+		}
+		mu.Lock()
+		ids = append(ids, body["deliveryId"].(string))
+		mu.Unlock()
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(callback.Close)
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback", "url": callback.URL, "secret": "refuse-secret",
+	})
+	set := mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": "ticket:refuse", "event": "ticket.refuse", "after": "1ms",
+	})
+	scheduleID := set["data"].(map[string]any)["scheduleId"].(string)
+
+	var first string
+	deadline := time.Now().Add(3 * time.Second)
+	for first == "" {
+		mu.Lock()
+		if len(ids) > 0 {
+			first = ids[0]
+		}
+		mu.Unlock()
+		if first != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("callback received no delivery")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	counted := waitForApplicationAttempts(t, ctx, admin, appID, first, 1)
+	if counted["status"] != "pending" {
+		t.Fatalf("refused delivery: %#v", counted)
+	}
+	blocked := waitForApplicationDelivery(t, ctx, admin, appID, first, "blocked")
+	if blocked["attempts"] != float64(5) {
+		t.Fatalf("blocked delivery: %#v", blocked)
+	}
+	mu.Lock()
+	got := append([]string(nil), ids...)
+	mu.Unlock()
+	if len(got) < 5 {
+		t.Fatalf("offers before block = %d, want at least 5: %v", len(got), got)
+	}
+	for _, id := range got {
+		if id != first {
+			t.Fatalf("retry changed delivery id: %v", got)
+		}
+	}
+	waitForQuietOffers(t, &mu, &ids, len(got))
+	listed := listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID, "status": "blocked"})
+	if len(listed) != 1 || listed[0]["id"] != first || listed[0]["event"] != "ticket.refuse" {
+		t.Fatalf("delivery list: %#v", listed)
+	}
+	var due bool
+	for _, item := range listRows(t, ctx, admin, map[string]any{"name": "history", "applicationId": appID, "subjectType": "schedule", "subjectId": scheduleID}) {
+		if item["event"] == "due" && item["subject_id"] == scheduleID {
+			due = true
+		}
+	}
+	if !due {
+		t.Fatal("blocked delivery missing schedule history")
+	}
+
+	mu.Lock()
+	beforeReplay := len(ids)
+	mu.Unlock()
+	write(t, ctx, admin, map[string]any{"op": "delivery.replay", "deliveryId": first})
+	if reply := read(t, ctx, admin); reply["ok"] != true || reply["data"].(map[string]any)["replayed"] != true {
+		t.Fatalf("replay: %#v", reply)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		got := append([]string(nil), ids...)
+		mu.Unlock()
+		if len(got) > beforeReplay {
+			if got[len(got)-1] != first {
+				t.Fatalf("replay changed delivery id: %v", got)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("replay did not offer the delivery")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	write(t, ctx, admin, map[string]any{"op": "delivery.cancel", "deliveryId": first})
+	if reply := read(t, ctx, admin); reply["ok"] != true || reply["data"].(map[string]any)["cancelled"] != true {
+		t.Fatalf("cancel: %#v", reply)
+	}
+	if got := waitForApplicationDelivery(t, ctx, admin, appID, first, "cancelled"); got["status"] != "cancelled" {
+		t.Fatalf("cancelled delivery: %#v", got)
+	}
+}
+
+func TestHTTPUnreachableCallbackStaysPendingAndRetriesSameID(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	t.Run("connection refused", func(t *testing.T) {
+		down := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		down.Close()
+		offerSameDeliveryAfterOutage(t, ctx, h, admin, down.URL)
+	})
+	t.Run("dns", func(t *testing.T) {
+		offerSameDeliveryAfterOutage(t, ctx, h, admin, "http://calcron-offline.invalid/delivery")
+	})
+	t.Run("timeout", func(t *testing.T) {
+		var mu sync.Mutex
+		var calls int
+		var first string
+		again := make(chan string, 1)
+		callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			if json.NewDecoder(r.Body).Decode(&body) != nil {
+				t.Errorf("body")
+				return
+			}
+			id, _ := body["deliveryId"].(string)
+			mu.Lock()
+			calls++
+			n := calls
+			if n == 1 {
+				first = id
+			}
+			mu.Unlock()
+			if n == 1 {
+				<-r.Context().Done()
+				return
+			}
+			again <- id
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		t.Cleanup(callback.Close)
+		appID, token := newApp(t, ctx, admin, "http-timeout")
+		mustCommand(t, h.URL, token, map[string]any{
+			"op": "callback.set", "idempotencyKey": "callback", "url": callback.URL, "secret": "timeout-secret",
+		})
+		mustCommand(t, h.URL, token, map[string]any{
+			"op": "schedule.set", "idempotencyKey": "arm", "key": "ticket:timeout", "event": "ticket.timeout", "after": "1ms",
+		})
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			mu.Lock()
+			id := first
+			mu.Unlock()
+			if id != "" {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("callback received no delivery")
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		mu.Lock()
+		id := first
+		mu.Unlock()
+		started := time.Now()
+		var offered string
+		select {
+		case offered = <-again:
+		case <-time.After(15 * time.Second):
+			t.Fatal("timed-out delivery was not offered again")
+		}
+		if waited := time.Since(started); waited < 8*time.Second {
+			t.Fatalf("second offer after %s, want the client timeout", waited)
+		}
+		if offered != id {
+			t.Fatalf("retry changed delivery id: got %s want %s", offered, id)
+		}
+		acked := waitForApplicationDelivery(t, ctx, admin, appID, id, "acked")
+		if acked["attempts"] != float64(0) {
+			t.Fatalf("timeout counted as a failed acknowledgement: %#v", acked)
+		}
+	})
+}
+
+func offerSameDeliveryAfterOutage(t *testing.T, ctx context.Context, h *httptest.Server, admin *websocket.Conn, offlineURL string) {
+	t.Helper()
+	appID, token := newApp(t, ctx, admin, strings.ReplaceAll(t.Name(), "/", "-"))
+	got := make(chan string, 1)
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Errorf("body")
+			return
+		}
+		select {
+		case got <- body["deliveryId"].(string):
+		default:
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(live.Close)
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback", "url": offlineURL, "secret": "offline-secret",
+	})
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": "ticket:offline", "event": "ticket.offline", "after": "1ms",
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	var pending map[string]any
+	for pending == nil {
+		for _, row := range listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID}) {
+			if row["status"] == "pending" {
+				pending = row
+			}
+		}
+		if pending != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("offline delivery was not created")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	time.Sleep(800 * time.Millisecond)
+	id := pending["id"].(string)
+	row := waitForApplicationDelivery(t, ctx, admin, appID, id, "pending")
+	if row["attempts"] != float64(0) {
+		t.Fatalf("unreachable callback counted a failed acknowledgement: %#v", row)
+	}
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback-live", "url": live.URL, "secret": "offline-secret",
+	})
+	var offered string
+	select {
+	case offered = <-got:
+	case <-time.After(3 * time.Second):
+		t.Fatal("delivery was not offered when the callback answered")
+	}
+	if offered != id {
+		t.Fatalf("retry changed delivery id: got %s want %s", offered, id)
+	}
+	acked := waitForApplicationDelivery(t, ctx, admin, appID, id, "acked")
+	if acked["attempts"] != float64(0) {
+		t.Fatalf("acked after outage: %#v", acked)
+	}
+}
+
 func TestHTTPDeliveryAttemptDoesNotReachTwoReceivers(t *testing.T) {
 	ctx, h, admin := testServer(t, 0)
 	appID, token := newApp(t, ctx, admin, "http-one")
@@ -292,5 +543,43 @@ func waitForApplicationDelivery(t *testing.T, ctx context.Context, admin *websoc
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatalf("delivery %s did not become %s", id, status)
+	return nil
+}
+
+func waitForQuietOffers(t *testing.T, mu *sync.Mutex, ids *[]string, already int) int {
+	t.Helper()
+	last := already
+	steady := 0
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && steady < 2 {
+		time.Sleep(300 * time.Millisecond)
+		mu.Lock()
+		n := len(*ids)
+		mu.Unlock()
+		if n == last {
+			steady++
+			continue
+		}
+		steady = 0
+		last = n
+	}
+	if steady < 2 {
+		t.Fatalf("offers continued after the delivery blocked, last count %d", last)
+	}
+	return last
+}
+
+func waitForApplicationAttempts(t *testing.T, ctx context.Context, admin *websocket.Conn, appID, id string, attempts float64) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, row := range listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID}) {
+			if row["id"] == id && row["attempts"] == attempts {
+				return row
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("delivery %s did not reach %g attempts", id, attempts)
 	return nil
 }
