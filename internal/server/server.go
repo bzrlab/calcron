@@ -86,6 +86,7 @@ func (s *Server) ListenAndServe(addr string) error { return http.ListenAndServe(
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("POST /commands", s.httpCommand)
 	mux.HandleFunc("/ws", s.ws)
 	mux.HandleFunc("/", s.dashboard)
 	return mux
