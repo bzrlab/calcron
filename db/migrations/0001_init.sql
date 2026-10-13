@@ -64,24 +64,43 @@ create table if not exists history (
   data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
--- Boot executes this file every start. Rebuild only while the column list is still the old one.
+-- Boot executes this file every start. Rebuild only while the key or predicate still differs.
+-- deliveries_claim_idx matched deliveries_pending_idx. Claim is a primary-key lookup, so the extra index is dropped once.
+drop index if exists deliveries_claim_idx;
 do $idx$
 declare
   spec record;
+  cols text;
+  pred text;
 begin
   for spec in
     select * from (values
-      ('deliveries_pending_idx', '(application_id, next_attempt_at)', $ddl$create index if not exists deliveries_pending_idx on deliveries (application_id, next_attempt_at) where status = 'pending'$ddl$),
-      ('deliveries_claim_idx', '(application_id, next_attempt_at)', $ddl$create index if not exists deliveries_claim_idx on deliveries (application_id, next_attempt_at) where status = 'pending'$ddl$),
-      ('history_subject_idx', '(application_id, subject_type, subject_id, created_at)', $ddl$create index if not exists history_subject_idx on history (application_id, subject_type, subject_id, created_at)$ddl$)
-    ) as wanted(index_name, needle, ddl)
+      ('deliveries_pending_idx', 'application_id, next_attempt_at', 'status = ''pending''', $ddl$create index if not exists deliveries_pending_idx on deliveries (application_id, next_attempt_at) where status = 'pending'$ddl$),
+      ('history_subject_idx', 'application_id, subject_type, subject_id, created_at', null, $ddl$create index if not exists history_subject_idx on history (application_id, subject_type, subject_id, created_at)$ddl$)
+    ) as wanted(index_name, columns, predicate, ddl)
   loop
-    if not exists (
-      select 1 from pg_indexes
-      where schemaname = current_schema()
-        and indexname = spec.index_name
-        and strpos(indexdef, spec.needle) > 0
-    ) then
+    select
+      (
+        select string_agg(a.attname, ', ' order by k.ord)
+        from pg_index ix
+        join pg_class ic on ic.oid = ix.indexrelid
+        join pg_namespace n on n.oid = ic.relnamespace
+        cross join lateral unnest(ix.indkey) with ordinality as k(attnum, ord)
+        join pg_attribute a on a.attrelid = ix.indrelid and a.attnum = k.attnum
+        where n.nspname = current_schema() and ic.relname = spec.index_name
+      ),
+      (
+        select pg_get_expr(ix.indpred, ix.indrelid)
+        from pg_index ix
+        join pg_class ic on ic.oid = ix.indexrelid
+        join pg_namespace n on n.oid = ic.relnamespace
+        where n.nspname = current_schema() and ic.relname = spec.index_name
+      )
+    into cols, pred;
+    if cols is distinct from spec.columns
+       or (spec.predicate is null) is distinct from (pred is null)
+       or (spec.predicate is not null and strpos(pred, spec.predicate) = 0)
+    then
       execute format('drop index if exists %I', spec.index_name);
       execute spec.ddl;
     end if;
