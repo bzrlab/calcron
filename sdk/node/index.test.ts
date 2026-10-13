@@ -158,6 +158,18 @@ test("leaves a delivery unacknowledged when its handler fails, without crashing 
   client.close();
 });
 
+test("does not reconnect when the first connection drops during auth", async t => {
+  installFakeWebSocket();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  FakeWebSocket.onCreate = socket => { socket.respond = () => socket.close(); };
+  const client = new Calcron("ws://calcron.test/ws", "test");
+  await assert.rejects(client.connect(), /Calcron disconnected/);
+  t.mock.timers.tick(10_000);
+  await settle();
+  assert.equal(FakeWebSocket.connections.length, 1, "reconnected after a failed connect");
+  client.close();
+});
+
 test("rejects invalid credentials during connect", async () => {
   installFakeWebSocket();
   const client = new Calcron("ws://calcron.test/ws", "invalid");

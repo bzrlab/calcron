@@ -52,7 +52,28 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   extend(key: string, by: string, idempotencyKey: string) { return this.request<Pick<ScheduleResult, "runAt">>({ op: "schedule.extend", key, by, idempotencyKey }); }
   start<Name extends WorkflowName<Workflows>>(name: Name, idempotencyKey: string, ...[data]: PayloadArgument<Workflows[Name]>) { return this.request<WorkflowResult>({ op: "workflow.start", name, data, idempotencyKey }); }
   signal<Name extends EventName<Events>>(event: Name, correlationKey: string, idempotencyKey: string, ...[data]: PayloadArgument<Events[Name]>) { return this.request<SignalResult>({ op: "signal", event, correlationKey, data, idempotencyKey }); }
-  private async open() { this.ws = new WebSocket(this.url); await new Promise<void>((ok, bad) => { this.ws.onopen = () => ok(); this.ws.onerror = () => bad(new Error("Calcron connection failed")); }); this.ws.onmessage = e => this.receive(JSON.parse(e.data)); this.ws.onclose = () => this.lost(); try { await this.request({ op: "auth", token: this.token }); } catch (error) { if (!this.reconnecting || (error as Error).message === "unauthorized") this.stopped = true; this.drop(); throw error; } this.retry = 250; }
+  private async open() {
+    if (this.stopped) return;
+    // onclose can set reconnecting before this catch runs. Decide from the value at entry.
+    const reconnecting = this.reconnecting;
+    this.ws = new WebSocket(this.url);
+    await new Promise<void>((ok, bad) => { this.ws.onopen = () => ok(); this.ws.onerror = () => bad(new Error("Calcron connection failed")); });
+    if (this.stopped) { this.ws.close(); return; }
+    this.ws.onmessage = e => this.receive(JSON.parse(e.data));
+    this.ws.onclose = () => this.lost();
+    try {
+      await this.request({ op: "auth", token: this.token });
+    } catch (error) {
+      if (!reconnecting || (error as Error).message === "unauthorized") {
+        this.stopped = true;
+        this.reconnecting = false;
+        clearTimeout(this.reconnectTimer);
+      }
+      this.drop();
+      throw error;
+    }
+    this.retry = 250;
+  }
   // A half-open connection never answers and never closes, so every request has a deadline and a missed one drops the connection.
   private request<T>(body: Record<string, unknown>) { const id = String(++this.n); return new Promise<T>((resolve, reject) => { if (this.ws.readyState !== WebSocket.OPEN) return reject(new Error("Calcron disconnected")); const timer = setTimeout(() => { this.waiting.delete(id); reject(new Error(`Calcron did not answer ${body.op} within ${REQUEST_TIMEOUT_MS / 1000} s`)); if (body.op !== "auth") this.drop(); }, REQUEST_TIMEOUT_MS); this.waiting.set(id, { resolve: value => { clearTimeout(timer); resolve(value as T); }, reject: error => { clearTimeout(timer); reject(error); } }); this.ws.send(JSON.stringify({ id, ...body })); }); }
   // Closing a half-open socket can take minutes to fire onclose, and a late onclose would fail the next connection's requests.
