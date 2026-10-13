@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAdmin } from "../lib/admin";
-import { useShell } from "../lib/shell";
+import { toastOnce, useShell } from "../lib/shell";
 
 type Stats = {
   scheduled: number;
@@ -26,15 +26,14 @@ export function Overview() {
     if (state !== "open") return;
     void send({ op: "dashboard.stats" }).then((r) => {
       if (r.ok) {
-        statsError.current = "";
+        toastOnce(statsError, notify, null);
         setStats(r.data as Stats);
         markUpdated();
+        return;
       }
+      toastOnce(statsError, notify, r.error ?? "dashboard.stats failed");
     }).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : "dashboard.stats failed";
-      if (statsError.current === message) return;
-      statsError.current = message;
-      notify(message, false);
+      toastOnce(statsError, notify, error instanceof Error ? error.message : "dashboard.stats failed");
     });
   }, [send, state, refresh, markUpdated, notify]);
 

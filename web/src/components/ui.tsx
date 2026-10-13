@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAdmin } from "../lib/admin";
-import { useShell } from "../lib/shell";
+import { toastOnce, useShell } from "../lib/shell";
 import { fmt } from "../lib/format";
 import { stringifyJson } from "../components/Json";
 
@@ -111,14 +111,21 @@ type HistoryRow = { id: number; event: string; data: unknown; created_at: string
 
 export function SubjectHistory({ type, id }: { type: string; id: string }) {
   const { send } = useAdmin();
-  const { refresh } = useShell();
+  const { refresh, notify } = useShell();
   const [rows, setRows] = useState<HistoryRow[] | null>(null);
+  const seen = useRef("");
   useEffect(() => {
     void send({ op: "dashboard.list", name: "history", subjectType: type, subjectId: id }).then((r) => {
-      if (r.ok) setRows(((r.data as HistoryRow[]) ?? []).slice().reverse());
-      else setRows([]);
-    }).catch(() => setRows([]));
-  }, [send, type, id, refresh]);
+      if (r.ok) {
+        toastOnce(seen, notify, null);
+        setRows(((r.data as HistoryRow[]) ?? []).slice().reverse());
+        return;
+      }
+      toastOnce(seen, notify, r.error ?? "history failed");
+    }).catch((error: unknown) => {
+      toastOnce(seen, notify, error instanceof Error ? error.message : "history failed");
+    });
+  }, [send, type, id, refresh, notify]);
   if (!rows) return <span className="loading loading-spinner loading-sm" />;
   if (rows.length === 0) return <p className="text-sm text-base-content/50">No history.</p>;
   return (

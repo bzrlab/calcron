@@ -39,6 +39,17 @@ export function useShell(): Ctx {
   return c;
 }
 
+// toastOnce reports a fetch failure once per distinct message and clears on success.
+export function toastOnce(seen: { current: string }, notify: Ctx["notify"], message: string | null) {
+  if (!message) {
+    seen.current = "";
+    return;
+  }
+  if (seen.current === message) return;
+  seen.current = message;
+  notify(message, false);
+}
+
 const POLL_MS = 5000;
 
 export function ShellProvider({ defaultView, children }: { defaultView: string; children: ReactNode }) {
@@ -53,6 +64,7 @@ export function ShellProvider({ defaultView, children }: { defaultView: string; 
   const dialogRef = useRef<HTMLDialogElement>(null);
   const toastTimers = useRef(new Map<number, number>());
   const pendingRef = useRef<ConfirmRequest | null>(null);
+  const appsError = useRef("");
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash(location.hash));
@@ -79,13 +91,6 @@ export function ShellProvider({ defaultView, children }: { defaultView: string; 
     return () => clearInterval(t);
   }, [state, bump]);
 
-  useEffect(() => {
-    if (state !== "open") return;
-    void send({ op: "dashboard.list", name: "apps" }).then((r) => {
-      if (r.ok) setApps((r.data as App[]) ?? []);
-    }).catch(() => setApps([]));
-  }, [send, state, refresh]);
-
   const names = useMemo(() => new Map(apps.map((a) => [a.id, a.namespace])), [apps]);
   const appName = useCallback((id: string) => names.get(id) ?? `${id.slice(0, 8)}…`, [names]);
 
@@ -98,6 +103,20 @@ export function ShellProvider({ defaultView, children }: { defaultView: string; 
     }, 4000);
     toastTimers.current.set(id, timer);
   }, []);
+
+  useEffect(() => {
+    if (state !== "open") return;
+    void send({ op: "dashboard.list", name: "apps" }).then((r) => {
+      if (r.ok) {
+        toastOnce(appsError, notify, null);
+        setApps((r.data as App[]) ?? []);
+        return;
+      }
+      toastOnce(appsError, notify, r.error ?? "apps failed");
+    }).catch((error: unknown) => {
+      toastOnce(appsError, notify, error instanceof Error ? error.message : "apps failed");
+    });
+  }, [send, state, refresh, notify]);
 
   const confirm = useCallback(
     (req: Omit<ConfirmRequest, "resolve">) => new Promise<boolean>((resolve) => {
