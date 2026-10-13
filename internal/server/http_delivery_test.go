@@ -269,6 +269,150 @@ func callbackHandler(t *testing.T, secret, token string, got chan<- map[string]a
 	})
 }
 
+func TestDueDeliveryOnLiveSocketSkipsCallback(t *testing.T) {
+	ctx, h, admin := testServer(t, 50*time.Millisecond)
+	appID, token := newApp(t, ctx, admin, "socket-wins")
+	const secret = "socket-wins-secret"
+	var mu sync.Mutex
+	calls := 0
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(callback.Close)
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback", "url": callback.URL, "secret": secret,
+	})
+	app := dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+	write(t, ctx, app, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": "ticket:socket", "event": "ticket.socket", "after": "1ms",
+	})
+	if got := read(t, ctx, app); got["ok"] != true {
+		t.Fatalf("set: %#v", got)
+	}
+
+	first, ok := nextDelivery(t, ctx, app, 4*time.Second)
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if !ok {
+		t.Fatalf("live socket delivery missing; callback calls=%d", n)
+	}
+	if first["event"] != "ticket.socket" || first["deliveryId"] == "" {
+		t.Fatalf("live socket delivery: %#v", first)
+	}
+	second, ok := nextDelivery(t, ctx, app, 2*time.Second)
+	if !ok || second["deliveryId"] != first["deliveryId"] {
+		t.Fatalf("next socket attempt: %#v ok=%v", second, ok)
+	}
+	mu.Lock()
+	n = calls
+	mu.Unlock()
+	if n != 0 {
+		t.Fatalf("callback ran %d times while the socket was authenticated", n)
+	}
+	if row := waitForApplicationDelivery(t, ctx, admin, appID, first["deliveryId"].(string), "pending"); row["event"] != "ticket.socket" {
+		t.Fatalf("pending delivery: %#v", row)
+	}
+}
+
+func TestPendingDeliveryMovesToCallbackWhenSocketCloses(t *testing.T) {
+	ctx, h, admin := testServer(t, 50*time.Millisecond)
+	appID, token := newApp(t, ctx, admin, "socket-then-callback")
+	const secret = "socket-then-callback-secret"
+	entered := make(chan map[string]any, 1)
+	release := make(chan struct{})
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	var mu sync.Mutex
+	calls := 0
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Errorf("body")
+			return
+		}
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		select {
+		case entered <- body:
+		default:
+		}
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(callback.Close)
+	t.Cleanup(free)
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback", "url": callback.URL, "secret": secret,
+	})
+	app := dial(t, ctx, h.URL, token)
+	write(t, ctx, app, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": "ticket:handoff", "event": "ticket.handoff", "after": "1ms",
+	})
+	if got := read(t, ctx, app); got["ok"] != true {
+		t.Fatalf("set: %#v", got)
+	}
+	first := delivery(t, ctx, app)
+	if first["deliveryId"] == "" {
+		t.Fatalf("live socket delivery: %#v", first)
+	}
+	mu.Lock()
+	if calls != 0 {
+		mu.Unlock()
+		t.Fatal("callback ran while the socket was authenticated")
+	}
+	mu.Unlock()
+	app.CloseNow()
+
+	var body map[string]any
+	select {
+	case body = <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("callback received no delivery after the socket closed")
+	}
+	if body["deliveryId"] != first["deliveryId"] || body["event"] != "ticket.handoff" {
+		t.Fatalf("callback delivery: %#v", body)
+	}
+	again := dial(t, ctx, h.URL, token)
+	defer again.CloseNow()
+	if extra, ok := nextDelivery(t, ctx, again, 400*time.Millisecond); ok {
+		t.Fatalf("in-flight callback attempt also offered on the socket: first %v extra %#v", first["deliveryId"], extra)
+	}
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("callback attempts = %d, want 1", n)
+	}
+	free()
+	waitForApplicationDelivery(t, ctx, admin, appID, first["deliveryId"].(string), "acked")
+}
+
+func nextDelivery(t *testing.T, ctx context.Context, c *websocket.Conn, wait time.Duration) (map[string]any, bool) {
+	t.Helper()
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		rctx, cancel := context.WithTimeout(ctx, time.Until(deadline))
+		_, raw, err := c.Read(rctx)
+		cancel()
+		if err != nil {
+			return nil, false
+		}
+		var msg map[string]any
+		if json.Unmarshal(raw, &msg) != nil || msg["op"] != "delivery" {
+			continue
+		}
+		return msg, true
+	}
+	return nil, false
+}
+
 func waitCallback(t *testing.T, got <-chan map[string]any) map[string]any {
 	t.Helper()
 	select {
