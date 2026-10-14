@@ -108,6 +108,9 @@ begin
 end
 $idx$;
 
+-- Callback delivery orders pending rows by next_attempt_at and does not equality-filter application_id.
+create index if not exists deliveries_callback_pending_idx on deliveries (next_attempt_at) where status = 'pending';
+
 create table if not exists throttles (
   application_id text not null references applications(id),
   throttle_key text not null,
@@ -196,3 +199,13 @@ do $$ begin
     alter table workflow_instances add constraint workflow_instances_status_check check (status in ('running','waiting_time','waiting_signal','waiting_ack','completed','cancelled','failed'));
   end if;
 end $$;
+
+-- Direct Schedule recurrence. The next occurrence stays on this row.
+alter table schedules add column if not exists recurrence jsonb;
+
+-- Presented on each Delivery, so this secret cannot be one-way hashed the way tokens are.
+alter table applications add column if not exists callback_url text;
+alter table applications add column if not exists callback_secret text;
+
+-- Set while an acknowledged occurrence has not received its completion Signal.
+alter table schedules add column if not exists awaiting_signal boolean not null default false;

@@ -80,6 +80,8 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 			return fail(err)
 		}
 		switch commandOperation(f.Op) {
+		case operationCallbackSet:
+			return s.applications.SetCallback(ctx, p.app, f)
 		case operationScheduleSet:
 			return s.schedules.Set(ctx, p.app, f)
 		case operationScheduleCancel:

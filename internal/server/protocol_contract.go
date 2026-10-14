@@ -19,6 +19,7 @@ const (
 	operationDeliveryReplay      commandOperation = "delivery.replay"
 	operationDeliveryCancel      commandOperation = "delivery.cancel"
 
+	operationCallbackSet      commandOperation = "callback.set"
 	operationScheduleSet      commandOperation = "schedule.set"
 	operationScheduleCancel   commandOperation = "schedule.cancel"
 	operationScheduleExtend   commandOperation = "schedule.extend"
@@ -50,7 +51,7 @@ func classifyCommandOperation(op string) (commandSpec, bool) {
 		operationCalendarOccurrences, operationStartScheduleSet, operationDashboardStats,
 		operationDashboardList, operationDeliveryReplay, operationDeliveryCancel:
 		return commandSpec{audience: adminCommand}, true
-	case operationScheduleSet, operationScheduleCancel, operationScheduleExtend,
+	case operationCallbackSet, operationScheduleSet, operationScheduleCancel, operationScheduleExtend,
 		operationScheduleThrottle, operationDeliveryAck, operationWorkflowStart,
 		operationSignal:
 		return commandSpec{audience: applicationCommand, requiresIdempotency: true}, true

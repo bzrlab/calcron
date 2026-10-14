@@ -90,10 +90,10 @@ func (c TypedChain[T]) chain() *Chain {
 
 // TypedSchedule pairs a schedule event with the matching payload type.
 type TypedSchedule[T any] struct {
-	Key, After, At, IdempotencyKey string
-	Event                          EventType[T]
-	Data                           T
-	Chain                          ChainValue
+	Key, After, At, Every, Daily, Timezone, IdempotencyKey string
+	Event                                                  EventType[T]
+	Data                                                   T
+	Chain                                                  ChainValue
 }
 
 // SetTyped creates or replaces a schedule with a payload tied to its event.
@@ -102,7 +102,7 @@ func SetTyped[T any](ctx context.Context, c *Client, s TypedSchedule[T]) (Schedu
 	if s.Chain != nil {
 		chain = s.Chain.chain()
 	}
-	return c.Set(ctx, Schedule{Key: s.Key, Event: s.Event.name, After: s.After, At: s.At, Data: s.Data, Chain: chain, IdempotencyKey: s.IdempotencyKey})
+	return c.Set(ctx, Schedule{Key: s.Key, Event: s.Event.name, After: s.After, At: s.At, Every: s.Every, Daily: s.Daily, Timezone: s.Timezone, Data: s.Data, Chain: chain, IdempotencyKey: s.IdempotencyKey})
 }
 
 // TypedThrottle pairs a throttled event with the matching payload type.
@@ -157,11 +157,14 @@ type SignalResult struct {
 type AckResult struct {
 	Acked bool `json:"acked"`
 }
+type CallbackResult struct {
+	URL string `json:"url"`
+}
 
 type Schedule struct {
-	Key, Event, After, At, IdempotencyKey string
-	Data                                  any
-	Chain                                 *Chain
+	Key, Event, After, At, Every, Daily, Timezone, IdempotencyKey string
+	Data                                                          any
+	Chain                                                         *Chain
 }
 
 // Chain creates a successor schedule after its parent delivery is acknowledged.
@@ -225,10 +228,19 @@ func (e Event) Ack(ctx context.Context) (AckResult, error) {
 	return requestAs[AckResult](e.client, ctx, map[string]any{"op": "delivery.ack", "deliveryId": e.ID, "idempotencyKey": "ack:" + e.ID})
 }
 func (c *Client) Set(ctx context.Context, s Schedule) (ScheduleResult, error) {
-	if (s.After == "") == (s.At == "") {
-		return ScheduleResult{}, errors.New("exactly one of after or at required")
+	n := 0
+	for _, field := range []string{s.After, s.At, s.Every, s.Daily} {
+		if field != "" {
+			n++
+		}
 	}
-	return requestAs[ScheduleResult](c, ctx, map[string]any{"op": "schedule.set", "key": s.Key, "event": s.Event, "after": s.After, "at": s.At, "data": s.Data, "chain": s.Chain, "idempotencyKey": s.IdempotencyKey})
+	if n != 1 {
+		return ScheduleResult{}, errors.New("exactly one of after, at, every, or daily required")
+	}
+	return requestAs[ScheduleResult](c, ctx, map[string]any{"op": "schedule.set", "key": s.Key, "event": s.Event, "after": s.After, "at": s.At, "every": s.Every, "daily": s.Daily, "timezone": s.Timezone, "data": s.Data, "chain": s.Chain, "idempotencyKey": s.IdempotencyKey})
+}
+func (c *Client) SetCallback(ctx context.Context, callbackURL, secret, idempotencyKey string) (CallbackResult, error) {
+	return requestAs[CallbackResult](c, ctx, map[string]any{"op": "callback.set", "url": callbackURL, "secret": secret, "idempotencyKey": idempotencyKey})
 }
 func (c *Client) Throttle(ctx context.Context, t Throttle) (ThrottleResult, error) {
 	return requestAs[ThrottleResult](c, ctx, map[string]any{"op": "schedule.throttle", "key": t.Key, "event": t.Event, "cooldown": t.Cooldown, "data": t.Data, "chain": t.Chain, "idempotencyKey": t.IdempotencyKey})

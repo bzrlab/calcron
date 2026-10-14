@@ -13,6 +13,9 @@ type Frame struct {
 	Event          string          `json:"event,omitempty"`
 	After          string          `json:"after,omitempty"`
 	At             string          `json:"at,omitempty"`
+	Every          string          `json:"every,omitempty"`
+	Daily          string          `json:"daily,omitempty"`
+	Timezone       string          `json:"timezone,omitempty"`
 	Until          string          `json:"until,omitempty"`
 	By             string          `json:"by,omitempty"`
 	Cooldown       string          `json:"cooldown,omitempty"`
@@ -27,6 +30,8 @@ type Frame struct {
 	LocalTime      string          `json:"localTime,omitempty"`
 	MissedPolicy   string          `json:"missedPolicy,omitempty"`
 	DeliveryID     string          `json:"deliveryId,omitempty"`
+	URL            string          `json:"url,omitempty"`
+	Secret         string          `json:"secret,omitempty"`
 	TokenID        string          `json:"tokenId,omitempty"`
 	SubjectType    string          `json:"subjectType,omitempty"`
 	SubjectID      string          `json:"subjectId,omitempty"`

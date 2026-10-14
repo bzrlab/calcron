@@ -3,7 +3,10 @@ package application
 
 import (
 	"context"
+	"net/url"
+	"strings"
 
+	"github.com/bzrlab/calcron/internal/idempotency"
 	"github.com/bzrlab/calcron/internal/protocol"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -40,6 +43,37 @@ func (m *Module) Create(ctx context.Context, f protocol.Frame) protocol.Reply {
 		return fail("application exists")
 	}
 	return ok(map[string]string{"applicationId": id, "token": "cc_" + tokenID + "_" + secret})
+}
+
+func (m *Module) SetCallback(ctx context.Context, app string, f protocol.Frame) protocol.Reply {
+	if f.URL == "" || f.Secret == "" || strings.ContainsAny(f.Secret, "\r\n") || !callbackURL(f.URL) {
+		return fail("url and secret required")
+	}
+	tx, err := m.db.Begin(ctx)
+	if err != nil {
+		return fail(err.Error())
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `update applications set callback_url=$2, callback_secret=$3 where id=$1`, app, f.URL, f.Secret)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if tag.RowsAffected() != 1 {
+		return fail("application not found")
+	}
+	response := ok(map[string]string{"url": f.URL})
+	if err = idempotency.RememberTx(ctx, tx, app, f.IdempotencyKey, response); err != nil {
+		return fail(err.Error())
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fail(err.Error())
+	}
+	return response
+}
+
+func callbackURL(raw string) bool {
+	parsed, err := url.ParseRequestURI(raw)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
 func (m *Module) RotateToken(ctx context.Context, f protocol.Frame) protocol.Reply {

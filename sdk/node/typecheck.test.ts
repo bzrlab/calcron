@@ -41,3 +41,24 @@ void calcron.set({ ...due, chain: { key: "invoice:42:paid", event: "invoice.paid
 void calcron.signal("invoice.paid", "invoice:42", "invoice:42:paid:v1", { amount: 100 });
 // @ts-expect-error workflow input must match the workflow name.
 void calcron.start("invoice-lifecycle", "invoice:42:start:v2", { amount: 100 });
+
+const every: Schedule<AppEvents, "invoice.due"> = {
+  key: "invoice:42",
+  event: "invoice.due",
+  every: "5m",
+  data: { invoiceId: "42", amount: 100 },
+  idempotencyKey: "invoice:42:every:v1",
+};
+const daily: Schedule<AppEvents, "invoice.due"> = {
+  key: "invoice:42",
+  event: "invoice.due",
+  daily: "09:30",
+  timezone: "Asia/Dhaka",
+  data: { invoiceId: "42", amount: 100 },
+  idempotencyKey: "invoice:42:daily:v1",
+};
+void calcron.set(every);
+void calcron.set(daily);
+void calcron.setCallback("https://app.example/callback", "sekret", "callback:v1");
+// @ts-expect-error a clock cannot be combined with after.
+void calcron.set({ ...due, every: "5m" });

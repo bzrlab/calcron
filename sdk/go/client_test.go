@@ -117,6 +117,22 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 			id := frame["id"]
 			switch frame["op"] {
 			case "schedule.set":
+				if frame["key"] == "clock-every" {
+					if frame["every"] != "1m" {
+						_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":false,"error":"missing every"}`))
+						continue
+					}
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"scheduleId":"s-every","runAt":"2026-09-28T10:00:00Z"}}`))
+					continue
+				}
+				if frame["key"] == "clock-daily" {
+					if frame["daily"] != "09:30" || frame["timezone"] != "Asia/Dhaka" {
+						_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":false,"error":"missing daily"}`))
+						continue
+					}
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"scheduleId":"s-daily","runAt":"2026-09-28T03:30:00Z"}}`))
+					continue
+				}
 				if frame["key"] == "invalid-deadline" {
 					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"scheduleId":"invalid","runAt":"2026-09-28T10:00:00Z"}}`))
 					continue
@@ -153,6 +169,12 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 				_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"instanceId":"w-1"}}`))
 			case "signal":
 				_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"matched":1}}`))
+			case "callback.set":
+				if frame["url"] != "https://app.example/callback" || frame["secret"] != "sekret" || frame["idempotencyKey"] != "callback:v1" {
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":false,"error":"missing callback"}`))
+					continue
+				}
+				_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"url":"https://app.example/callback"}}`))
 			case "delivery.ack":
 				acked <- frame
 				_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"id":"`+id.(string)+`","ok":true,"data":{"acked":true}}`))
@@ -205,6 +227,18 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 	}
 	if _, err = c.Set(ctx, Schedule{Key: "invalid-deadline", Event: "invoice.due", IdempotencyKey: "invalid-deadline:v1"}); err == nil {
 		t.Fatal("Set accepted a schedule without after or at")
+	}
+	every, err := c.Set(ctx, Schedule{Key: "clock-every", Event: "invoice.due", Every: "1m", IdempotencyKey: "every:v1"})
+	if err != nil || every.ScheduleID != "s-every" {
+		t.Fatalf("every = %#v, %v", every, err)
+	}
+	daily, err := c.Set(ctx, Schedule{Key: "clock-daily", Event: "invoice.due", Daily: "09:30", Timezone: "Asia/Dhaka", IdempotencyKey: "daily:v1"})
+	if err != nil || daily.ScheduleID != "s-daily" {
+		t.Fatalf("daily = %#v, %v", daily, err)
+	}
+	callback, err := c.SetCallback(ctx, "https://app.example/callback", "sekret", "callback:v1")
+	if err != nil || callback.URL != "https://app.example/callback" {
+		t.Fatalf("callback = %#v, %v", callback, err)
 	}
 	select {
 	case event := <-delivered:

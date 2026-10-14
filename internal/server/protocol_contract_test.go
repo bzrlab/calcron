@@ -24,6 +24,7 @@ func TestCommandOperationContract(t *testing.T) {
 		{"dashboard list", operationDashboardList, adminCommand, false},
 		{"delivery replay", operationDeliveryReplay, adminCommand, false},
 		{"delivery cancel", operationDeliveryCancel, adminCommand, false},
+		{"callback set", operationCallbackSet, applicationCommand, true},
 		{"schedule set", operationScheduleSet, applicationCommand, true},
 		{"schedule cancel", operationScheduleCancel, applicationCommand, true},
 		{"schedule extend", operationScheduleExtend, applicationCommand, true},

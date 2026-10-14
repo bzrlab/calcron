@@ -38,6 +38,8 @@ type Server struct {
 	calendars      *calendar.Module
 	schedules      *schedule.Module
 	deliveryAdmin  *delivery.Admin
+	callbackHTTP   *http.Client
+	callbackWait   sync.WaitGroup
 	cancel         context.CancelFunc
 	done           chan struct{}
 	closeOnce      sync.Once
@@ -63,6 +65,13 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	s.calendars = calendar.New(db)
 	s.schedules = schedule.New(db, s.calendars, random, s.startWorkflow)
 	s.deliveryAdmin = delivery.NewAdmin(db)
+	s.callbackHTTP = &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			// A redirect would send the callback secret to another host. A 3xx stays a non-success.
+			return http.ErrUseLastResponse
+		},
+	}
 	loopCtx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
 	s.done = make(chan struct{})
@@ -77,6 +86,7 @@ func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.cancel()
 		<-s.done
+		s.callbackWait.Wait()
 		s.db.Close()
 	})
 }
@@ -86,6 +96,7 @@ func (s *Server) ListenAndServe(addr string) error { return http.ListenAndServe(
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("POST /commands", s.httpCommand)
 	mux.HandleFunc("/ws", s.ws)
 	mux.HandleFunc("/", s.dashboard)
 	return mux
@@ -101,6 +112,7 @@ func (s *Server) loop(ctx context.Context) {
 		case <-tick.C:
 			s.makeDue(ctx)
 			s.deliver(ctx)
+			s.deliverCallbacks(ctx)
 			s.workflows.wake(ctx)
 			s.schedules.StartRecurring(ctx)
 			s.cleanupExpiredThrottles(ctx)
