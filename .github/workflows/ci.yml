@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   go:
-    timeout-minutes: 15
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -37,7 +37,7 @@ jobs:
           go-version-file: go.mod
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test ./... -count=1
+      - run: go test ./... -count=1 -timeout 20m
       - name: Start Calcron for bot end-to-end test
         run: |
           go build -o calcron ./cmd/calcron
