@@ -165,7 +165,7 @@ func (m *Module) Set(ctx context.Context, app string, f protocol.Frame) protocol
 	}
 	defer tx.Rollback(ctx)
 	var scheduleID string
-	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain,recurrence) values($1,$2,$3,$4,$5,$6,'scheduled',$7,$8) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,recurrence=excluded.recurrence,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, runAt, f.Chain, recurrence).Scan(&scheduleID)
+	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain,recurrence) values($1,$2,$3,$4,$5,$6,'scheduled',$7,$8) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,recurrence=excluded.recurrence,awaiting_signal=false,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, runAt, f.Chain, recurrence).Scan(&scheduleID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -308,7 +308,7 @@ func (m *Module) SetAfterTx(ctx context.Context, tx pgx.Tx, app string, f protoc
 		payload = []byte(`{}`)
 	}
 	var scheduleID string
-	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain,recurrence) values($1,$2,$3,$4,$5,now()+$7::interval,'scheduled',$6,null) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,recurrence=null,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, f.Chain, delay.String()).Scan(&scheduleID)
+	err = tx.QueryRow(ctx, `insert into schedules(id,application_id,schedule_key,event,payload,run_at,status,chain,recurrence) values($1,$2,$3,$4,$5,now()+$7::interval,'scheduled',$6,null) on conflict(application_id,schedule_key) do update set event=excluded.event,payload=excluded.payload,run_at=excluded.run_at,status='scheduled',chain=excluded.chain,recurrence=null,awaiting_signal=false,updated_at=now() returning id`, m.newID(), app, f.Key, f.Event, payload, f.Chain, delay.String()).Scan(&scheduleID)
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -334,7 +334,46 @@ func (m *Module) AdvanceRecurrence(ctx context.Context, tx pgx.Tx, scheduleID st
 	if err != nil {
 		return err
 	}
+	_, err = tx.Exec(ctx, `update schedules set run_at=$2, status='scheduled', awaiting_signal=true, updated_at=now() where id=$1`, scheduleID, next)
+	return err
+}
+
+// SkipUnfinished records a due slot that must not start a Delivery while the
+// previous occurrence is still awaiting its completion Signal, then arms the following slot.
+func (m *Module) SkipUnfinished(ctx context.Context, tx pgx.Tx, scheduleID string) (bool, error) {
+	var app string
+	var runAt time.Time
+	var raw []byte
+	var awaiting bool
+	err := tx.QueryRow(ctx, `select application_id, run_at, recurrence, awaiting_signal from schedules where id=$1`, scheduleID).Scan(&app, &runAt, &raw, &awaiting)
+	if err != nil {
+		return false, err
+	}
+	if !awaiting {
+		return false, nil
+	}
+	slot, err := json.Marshal(map[string]string{"runAt": runAt.UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		return false, err
+	}
+	if _, err = tx.Exec(ctx, `insert into history(application_id,subject_type,subject_id,event,data) values($1,'schedule',$2,'skipped',$3)`, app, scheduleID, slot); err != nil {
+		return false, err
+	}
+	next, err := nextOccurrence(runAt, raw)
+	if err != nil {
+		return false, err
+	}
 	_, err = tx.Exec(ctx, `update schedules set run_at=$2, status='scheduled', updated_at=now() where id=$1`, scheduleID, next)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// FinishOccurrence accepts the completion Signal for the open occurrence.
+// The correlation key is the Schedule key. Acknowledgement does not call this.
+func (m *Module) FinishOccurrence(ctx context.Context, tx pgx.Tx, app, event, key string) error {
+	_, err := tx.Exec(ctx, `update schedules set awaiting_signal=false, updated_at=now() where application_id=$1 and schedule_key=$2 and event=$3 and awaiting_signal`, app, key, event)
 	return err
 }
 

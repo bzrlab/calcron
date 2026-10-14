@@ -203,3 +203,6 @@ alter table schedules add column if not exists recurrence jsonb;
 -- Presented on each Delivery, so this secret cannot be one-way hashed the way tokens are.
 alter table applications add column if not exists callback_url text;
 alter table applications add column if not exists callback_secret text;
+
+-- Set while an acknowledged occurrence has not received its completion Signal.
+alter table schedules add column if not exists awaiting_signal boolean not null default false;

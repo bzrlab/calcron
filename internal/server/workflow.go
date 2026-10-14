@@ -143,6 +143,9 @@ func (s *Server) signal(ctx context.Context, app string, f frame) reply {
 		return fail(e.Error())
 	}
 	defer tx.Rollback(ctx)
+	if e = s.schedules.FinishOccurrence(ctx, tx, app, f.Event, f.Correlation); e != nil {
+		return fail(e.Error())
+	}
 	if e = rememberTx(ctx, tx, app, f.IdempotencyKey, r); e != nil {
 		return fail(e.Error())
 	}

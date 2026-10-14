@@ -91,6 +91,13 @@ func (s *Server) makeDue(ctx context.Context) {
 	}
 	rows.Close()
 	for _, item := range due {
+		skipped, skipErr := s.schedules.SkipUnfinished(ctx, tx, item.id)
+		if skipErr != nil {
+			return
+		}
+		if skipped {
+			continue
+		}
 		if _, err = tx.Exec(ctx, `update schedules set status='delivered',updated_at=now() where id=$1`, item.id); err == nil {
 			_, err = tx.Exec(ctx, `insert into deliveries(id,schedule_id,application_id,event,payload,status,next_attempt_at) values($2,$1,$3,$4,$5,'pending',now())`, item.id, random(), item.app, item.event, item.data)
 		}

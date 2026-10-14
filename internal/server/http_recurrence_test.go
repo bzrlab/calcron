@@ -105,6 +105,10 @@ func TestHTTPEveryMinutesStaysOnTheClock(t *testing.T) {
 	if starts := listRows(t, ctx, admin, map[string]any{"name": "start_schedules", "applicationId": appID}); len(starts) != 0 {
 		t.Fatalf("recurrence created a start schedule: %#v", starts)
 	}
+	mustCommand(t, h.URL, token, map[string]any{
+		// The next slot starts only after the completion Signal. Acknowledgement armed the clock.
+		"op": "signal", "idempotencyKey": "finished", "event": "payment.reconcile", "correlationKey": "sweep:minutes",
+	})
 
 	second := waitCallbackFor(t, got, 70*time.Second)
 	if second["deliveryId"] == first["deliveryId"] || second["scheduleId"] != scheduleID {
@@ -202,6 +206,106 @@ func TestHTTPDailyClockUsesIANATimezone(t *testing.T) {
 	}
 	if workflows := listRows(t, ctx, admin, map[string]any{"name": "workflows", "applicationId": appID}); len(workflows) != 0 {
 		t.Fatalf("daily recurrence created a workflow instance: %#v", workflows)
+	}
+}
+
+func TestHTTPRecurrenceSkipsTheNextSlotUntilCompletionSignal(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "http-skip-unfinished")
+	const key = "sweep:open"
+	got := make(chan map[string]any, 4)
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Error("body")
+			return
+		}
+		got <- body
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(callback.Close)
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback", "url": callback.URL, "secret": "skip-secret",
+	})
+
+	set := mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": key, "event": "payment.reconcile", "every": "1m",
+	})
+	data := commandData(t, set)
+	scheduleID, _ := data["scheduleId"].(string)
+	firstAt := parseInstant(t, data["runAt"])
+	if scheduleID == "" {
+		t.Fatal("schedule was not created")
+	}
+
+	first := waitCallbackFor(t, got, 70*time.Second)
+	if first["event"] != "payment.reconcile" || first["scheduleId"] != scheduleID || first["deliveryId"] == "" {
+		t.Fatalf("delivery: %#v", first)
+	}
+	deliveryID := first["deliveryId"].(string)
+	acked := waitForApplicationDeliveryFor(t, ctx, admin, appID, deliveryID, "acked", 8*time.Second)
+	if acked["status"] != "acked" {
+		t.Fatalf("acknowledgement: %#v", acked)
+	}
+	armed := scheduleRows(t, ctx, admin, appID, key)
+	if len(armed) != 1 || armed[0]["status"] != "scheduled" {
+		t.Fatalf("acknowledgement did not keep the Schedule: %#v", armed)
+	}
+	nextAt := parseInstant(t, armed[0]["run_at"])
+	if !nextAt.Equal(firstAt.Add(time.Minute)) {
+		t.Fatalf("next slot %v, want %v", nextAt, firstAt.Add(time.Minute))
+	}
+
+	if wait := time.Until(nextAt.Add(time.Second)); wait > 0 {
+		time.Sleep(wait)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var skipped map[string]any
+	for time.Now().Before(deadline) {
+		deliveries := listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID})
+		if len(deliveries) != 1 || deliveries[0]["id"] != deliveryID || deliveries[0]["status"] != "acked" {
+			t.Fatalf("acknowledgement started another delivery: %#v", deliveries)
+		}
+		for _, item := range listRows(t, ctx, admin, map[string]any{"name": "history", "applicationId": appID, "subjectType": "schedule", "subjectId": scheduleID}) {
+			if item["event"] == "skipped" {
+				skipped = item
+			}
+		}
+		if skipped != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if skipped == nil {
+		t.Fatal("skipped slot missing from history")
+	}
+	slot, _ := skipped["data"].(map[string]any)
+	if slot == nil || !parseInstant(t, slot["runAt"]).Equal(nextAt) {
+		t.Fatalf("skipped slot %#v, want %v", skipped["data"], nextAt)
+	}
+	following := scheduleRows(t, ctx, admin, appID, key)
+	if len(following) != 1 || !parseInstant(t, following[0]["run_at"]).Equal(nextAt.Add(time.Minute)) {
+		t.Fatalf("slot after the skip %#v, want %v", following, nextAt.Add(time.Minute))
+	}
+	select {
+	case extra := <-got:
+		t.Fatalf("delivery before completion signal: %#v", extra)
+	default:
+	}
+
+	signaled := mustCommand(t, h.URL, token, map[string]any{
+		"op": "signal", "idempotencyKey": "finished", "event": "payment.reconcile", "correlationKey": key,
+	})
+	if commandData(t, signaled)["matched"] != float64(0) {
+		t.Fatalf("completion signal: %#v", signaled)
+	}
+	if rows := listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID}); len(rows) != 1 || rows[0]["status"] != "acked" {
+		t.Fatalf("signal delivered the skipped slot: %#v", rows)
+	}
+
+	later := waitCallbackFor(t, got, 80*time.Second)
+	if later["deliveryId"] == deliveryID || later["scheduleId"] != scheduleID || later["event"] != "payment.reconcile" {
+		t.Fatalf("later occurrence: %#v", later)
 	}
 }
 
