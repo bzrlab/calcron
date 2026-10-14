@@ -108,6 +108,9 @@ begin
 end
 $idx$;
 
+-- Callback delivery orders pending rows by next_attempt_at and does not equality-filter application_id.
+create index if not exists deliveries_callback_pending_idx on deliveries (next_attempt_at) where status = 'pending';
+
 create table if not exists throttles (
   application_id text not null references applications(id),
   throttle_key text not null,

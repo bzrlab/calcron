@@ -40,23 +40,18 @@ func New(db *pgxpool.Pool, calendars *calendar.Module, newID func() string, star
 }
 
 func deadline(f protocol.Frame) (time.Time, []byte, error) {
-	modes := 0
-	if f.After != "" {
-		modes++
-	}
-	if f.At != "" {
-		modes++
-	}
-	if f.Every != "" {
-		modes++
-	}
-	if f.Daily != "" {
-		modes++
-	}
 	if f.Timezone != "" && f.Daily == "" {
 		return time.Time{}, nil, errors.New("timezone requires daily")
 	}
-	if modes > 1 {
+	clock := 0
+	if f.Every != "" {
+		clock++
+	}
+	if f.Daily != "" {
+		clock++
+	}
+	// after wins when at is also set, matching the original if-after-else-at order.
+	if clock > 1 || (clock == 1 && (f.After != "" || f.At != "")) {
 		return time.Time{}, nil, errors.New("exactly one of after, at, every, or daily")
 	}
 	if f.After != "" {
@@ -67,7 +62,7 @@ func deadline(f protocol.Frame) (time.Time, []byte, error) {
 		at, err := time.Parse(time.RFC3339, f.At)
 		return at, nil, err
 	}
-	if f.Every != "" || f.Daily != "" {
+	if clock == 1 {
 		raw, err := json.Marshal(recurrence{Every: f.Every, Daily: f.Daily, Timezone: f.Timezone})
 		if err != nil {
 			return time.Time{}, nil, err
@@ -84,11 +79,10 @@ func nextOccurrence(from time.Time, raw []byte) (time.Time, error) {
 		return time.Time{}, errors.New("invalid recurrence")
 	}
 	if rule.Every != "" {
-		every, err := time.ParseDuration(rule.Every)
-		if err != nil || every < time.Minute || every%time.Minute != 0 {
-			return time.Time{}, errors.New("every must be whole minutes")
+		step, err := everyStep(rule.Every)
+		if err != nil {
+			return time.Time{}, err
 		}
-		step := every.Nanoseconds()
 		next := (from.UnixNano()/step + 1) * step
 		return time.Unix(0, next).UTC(), nil
 	}
@@ -98,26 +92,89 @@ func nextOccurrence(from time.Time, raw []byte) (time.Time, error) {
 	return time.Time{}, errors.New("invalid recurrence")
 }
 
+func everyStep(every string) (int64, error) {
+	parsed, err := time.ParseDuration(every)
+	if err != nil || parsed < time.Minute || parsed%time.Minute != 0 {
+		return 0, errors.New("every must be whole minutes")
+	}
+	return parsed.Nanoseconds(), nil
+}
+
 // latestDue is the newest occurrence at or before now. from is that occurrence
 // when no later slot is due.
 func latestDue(from time.Time, raw []byte, now time.Time) (time.Time, error) {
 	if from.After(now) {
 		return from, nil
 	}
-	current := from
-	for {
-		next, err := nextOccurrence(current, raw)
+	var rule recurrence
+	if err := json.Unmarshal(raw, &rule); err != nil {
+		return time.Time{}, errors.New("invalid recurrence")
+	}
+	if rule.Every != "" {
+		return latestEvery(from, rule.Every, now)
+	}
+	if rule.Daily != "" {
+		return latestDaily(from, rule.Daily, rule.Timezone, now)
+	}
+	return time.Time{}, errors.New("invalid recurrence")
+}
+
+func latestEvery(from time.Time, every string, now time.Time) (time.Time, error) {
+	step, err := everyStep(every)
+	if err != nil {
+		return time.Time{}, err
+	}
+	next := time.Unix(0, (from.UnixNano()/step+1)*step).UTC()
+	if next.After(now) {
+		return from, nil
+	}
+	return time.Unix(0, (now.UnixNano()/step)*step).UTC(), nil
+}
+
+func latestDaily(from time.Time, clock, timezone string, now time.Time) (time.Time, error) {
+	next, err := nextDaily(from, clock, timezone)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if next.After(now) {
+		return from, nil
+	}
+	// ponytail: two days covers a DST gap. A zone that skips this clock all year needs a real calendar.
+	probe := now.Add(-48 * time.Hour)
+	if probe.Before(from) {
+		probe = from
+	}
+	var slot time.Time
+	for range 4 {
+		candidate, err := nextDaily(probe, clock, timezone)
 		if err != nil {
 			return time.Time{}, err
 		}
-		if next.After(now) {
-			return current, nil
+		if candidate.After(now) {
+			break
 		}
-		if !next.After(current) {
+		if !candidate.After(probe) {
 			return time.Time{}, errors.New("recurrence did not advance")
 		}
-		current = next
+		slot = candidate
+		probe = candidate
 	}
+	if slot.IsZero() || slot.Before(from) {
+		return time.Time{}, errors.New("invalid daily")
+	}
+	return slot, nil
+}
+
+// earliestOnClock is the first occurrence at or after at.
+func earliestOnClock(at time.Time, raw []byte) (time.Time, error) {
+	next, err := nextOccurrence(at.Add(-time.Nanosecond), raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if next.Before(at) {
+		return time.Time{}, errors.New("recurrence did not advance")
+	}
+	return next, nil
 }
 
 func nextDaily(from time.Time, clock, timezone string) (time.Time, error) {
@@ -252,9 +309,34 @@ func (m *Module) Extend(ctx context.Context, app string, f protocol.Frame) proto
 		return fail(err.Error())
 	}
 	defer tx.Rollback(ctx)
+	var raw []byte
+	err = tx.QueryRow(ctx, `select recurrence from schedules where application_id=$1 and schedule_key=$2 and status!='cancelled'`, app, f.Key).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fail("schedule not found")
+	}
+	if err != nil {
+		return fail(err.Error())
+	}
 	var scheduleID string
 	var runAt time.Time
-	err = tx.QueryRow(ctx, `update schedules set run_at=greatest(run_at,now())+$3::interval,status='scheduled',updated_at=now() where application_id=$1 and schedule_key=$2 and status!='cancelled' returning id,run_at`, app, f.Key, duration.String()).Scan(&scheduleID, &runAt)
+	if len(raw) == 0 || string(raw) == "null" {
+		err = tx.QueryRow(ctx, `update schedules set run_at=greatest(run_at,now())+$3::interval,status='scheduled',updated_at=now() where application_id=$1 and schedule_key=$2 and status!='cancelled' returning id,run_at`, app, f.Key, duration.String()).Scan(&scheduleID, &runAt)
+	} else {
+		// ponytail: round up to the next clock slot. A phase stored apart from run_at would add `by` without jumping a slot.
+		var dbNow time.Time
+		err = tx.QueryRow(ctx, `select id, run_at, now() from schedules where application_id=$1 and schedule_key=$2 and status!='cancelled' for update`, app, f.Key).Scan(&scheduleID, &runAt, &dbNow)
+		if err == nil {
+			base := runAt
+			if base.Before(dbNow) {
+				base = dbNow
+			}
+			var slot time.Time
+			slot, err = earliestOnClock(base.Add(duration), raw)
+			if err == nil {
+				err = tx.QueryRow(ctx, `update schedules set run_at=$2, status='scheduled', awaiting_signal=false, updated_at=now() where id=$1 returning run_at`, scheduleID, slot).Scan(&runAt)
+			}
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fail("schedule not found")
 	}

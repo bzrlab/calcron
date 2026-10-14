@@ -16,7 +16,8 @@ Every state-changing operation requires an application-supplied idempotency key.
 
 | Operation | What it does | Result |
 | --- | --- | --- |
-| `set` | Creates or replaces the application-scoped schedule named by `key`. Provide exactly one of `after` or `at`. | `scheduleId`, `runAt` |
+| `set` | Creates or replaces the application-scoped schedule named by `key`. Provide exactly one of `after`, `at`, `every`, or `daily`. `every` is a whole number of minutes. `daily` is an `HH:MM` clock time plus an IANA `timezone`. | `scheduleId`, `runAt` |
+| `setCallback` | Registers the callback URL and secret used for Delivery when the application has no live WebSocket. | `url` |
 | `cancel` | Cancels the named schedule; cancelling an absent schedule is safe. | `cancelled` |
 | `extend` | Adds `by` to the current deadline, or from now if it is already due. | `runAt` |
 | `throttle` | Immediately creates one delivery for `key`, then ignores repeated triggers during `cooldown` (leading edge). | `triggered` |
@@ -29,12 +30,13 @@ Every state-changing operation requires an application-supplied idempotency key.
 
 | SDK | Method | Parameters |
 | --- | --- | --- |
-| Node | `set(schedule)` | `key`, `event`, exactly one of `after` / `at`, optional `data` / `chain`, `idempotencyKey` → `ScheduleResult` |
+| Node | `set(schedule)` | `key`, `event`, exactly one of `after` / `at` / `every` / `daily` (`daily` also needs `timezone`), optional `data` / `chain`, `idempotencyKey` → `ScheduleResult` |
+| Node | `setCallback(url, secret, idempotencyKey)` | callback URL and secret → `{ url }` |
 | Node | `throttle(request)` | `key`, `event`, `cooldown`, optional `data` / `chain`, `idempotencyKey` → `ThrottleResult` |
 | Node | `cancel(key, idempotencyKey)` / `extend(key, by, idempotencyKey)` | schedule key and mutation → `CancelResult` / `{ runAt }` |
 | Node | `start(name, idempotencyKey, data?)` / `signal(event, correlationKey, idempotencyKey, data?)` | workflow start or correlated completion → `WorkflowResult` / `SignalResult` |
 | Node | `on(event, handler)` | handler receives `{ id, data, ack() }`; `ack()` returns `AckResult` |
-| Go | `Set(ctx, Schedule)` / `Throttle(ctx, Throttle)` | Same fields as Node; `Chain` is `{ Key, Event, After, Data }` → typed result and `error` |
+| Go | `Set(ctx, Schedule)` / `SetCallback(ctx, url, secret, idempotencyKey)` / `Throttle(ctx, Throttle)` | Same fields as Node; `Chain` is `{ Key, Event, After, Data }` → typed result and `error` |
 | Go | `Cancel`, `Extend`, `Start`, `Signal` | Same positional fields as Node, prefixed with `context.Context` → typed result and `error` |
 | Go | `On(event, func(Event))` | `Event` has `ID`, `Name`, `Data`; `Ack(ctx)` returns `AckResult, error` |
 

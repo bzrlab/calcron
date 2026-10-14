@@ -68,6 +68,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	s.callbackHTTP = &http.Client{
 		Timeout: 10 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
+			// A redirect would send the callback secret to another host. A 3xx stays a non-success.
 			return http.ErrUseLastResponse
 		},
 	}

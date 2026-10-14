@@ -14,6 +14,27 @@ import (
 	"github.com/coder/websocket"
 )
 
+func TestWebSocketScheduleSetWithAfterAndAtUsesAfter(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	_, token := newApp(t, ctx, admin, "ws-after-at")
+	app := dial(t, ctx, h.URL, token)
+	defer app.CloseNow()
+	fixed := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
+	before := time.Now().UTC()
+	write(t, ctx, app, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "both", "key": "ticket:both", "event": "ticket.close",
+		"after": "1h", "at": fixed,
+	})
+	got := read(t, ctx, app)
+	if got["ok"] != true {
+		t.Fatalf("after and at: %#v", got)
+	}
+	runAt := parseInstant(t, got["data"].(map[string]any)["runAt"])
+	if runAt.Before(before.Add(59*time.Minute)) || runAt.After(before.Add(61*time.Minute)) {
+		t.Fatalf("runAt %v, want about one hour after %v", runAt, before)
+	}
+}
+
 func TestHTTPScheduleSetMatchesWebSocket(t *testing.T) {
 	ctx, h, admin := testServer(t, 0)
 	_, token := newApp(t, ctx, admin, "http-set")
@@ -346,7 +367,7 @@ func postCommand(t *testing.T, rawURL, token string, body map[string]any) (int, 
 		t.Fatal(err)
 	}
 	if token != "" && strings.Contains(req.URL.String(), token) {
-		t.Fatalf("token appears in URL %s", req.URL.RequestURI())
+		t.Fatal("token appears in URL")
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)

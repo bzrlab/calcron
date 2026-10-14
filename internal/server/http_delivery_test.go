@@ -6,12 +6,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestHTTPOneShotScheduleDeliversAndAcknowledges(t *testing.T) {
@@ -643,6 +645,52 @@ func TestPendingDeliveryMovesToCallbackWhenSocketCloses(t *testing.T) {
 	}
 	free()
 	waitForApplicationDelivery(t, ctx, admin, appID, first["deliveryId"].(string), "acked")
+}
+
+func TestHTTPEmptyCallbackSecretReleasesTheDeliveryLease(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "http-lease")
+	got := make(chan map[string]any, 1)
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Error("body")
+			return
+		}
+		got <- body
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(callback.Close)
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback", "url": callback.URL, "secret": "lease-secret",
+	})
+	conn, err := pgx.Connect(ctx, os.Getenv("CALCRON_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close(context.Background()) })
+	if _, err = conn.Exec(ctx, `update applications set callback_secret='' where id=$1`, appID); err != nil {
+		t.Fatal(err)
+	}
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": "ticket:lease", "event": "ticket.close", "after": "1ms",
+	})
+	select {
+	case body := <-got:
+		t.Fatalf("delivered with an empty secret: %#v", body)
+	case <-time.After(time.Second):
+	}
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback-again", "url": callback.URL, "secret": "lease-secret",
+	})
+	select {
+	case body := <-got:
+		if body["event"] != "ticket.close" || body["deliveryId"] == "" {
+			t.Fatalf("delivery: %#v", body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("delivery stayed leased after the callback secret was missing")
+	}
 }
 
 func nextDelivery(t *testing.T, ctx context.Context, c *websocket.Conn, wait time.Duration) (map[string]any, bool) {

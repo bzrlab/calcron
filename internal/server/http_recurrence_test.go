@@ -127,6 +127,71 @@ func TestHTTPEveryMinutesStaysOnTheClock(t *testing.T) {
 	}
 }
 
+func TestHTTPExtendStaysOnTheClock(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "http-extend-clock")
+	set := mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": "sweep:extend", "event": "payment.reconcile", "every": "1m",
+	})
+	runAt := parseInstant(t, commandData(t, set)["runAt"])
+	extended := commandData(t, mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.extend", "idempotencyKey": "extend", "key": "sweep:extend", "by": "30s",
+	}))
+	got := parseInstant(t, extended["runAt"])
+	if !onTheMinute(got) || !got.Equal(runAt.Add(time.Minute)) {
+		t.Fatalf("extended runAt %v, want %v on the clock", got, runAt.Add(time.Minute))
+	}
+	rows := scheduleRows(t, ctx, admin, appID, "sweep:extend")
+	if len(rows) != 1 || !parseInstant(t, rows[0]["run_at"]).Equal(got) {
+		t.Fatalf("stored deadline: %#v", rows)
+	}
+}
+
+func TestHTTPExtendDoesNotSkipTheFollowingClockSlot(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "http-extend-skip")
+	const key = "sweep:extend-open"
+	got := make(chan map[string]any, 2)
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Error("body")
+			return
+		}
+		got <- body
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(callback.Close)
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback", "url": callback.URL, "secret": "extend-secret",
+	})
+	set := mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": key, "event": "payment.reconcile", "every": "1m",
+	})
+	scheduleID, _ := commandData(t, set)["scheduleId"].(string)
+	first := waitCallbackFor(t, got, 70*time.Second)
+	if first["scheduleId"] != scheduleID || first["deliveryId"] == "" {
+		t.Fatalf("delivery: %#v", first)
+	}
+	waitForApplicationDeliveryFor(t, ctx, admin, appID, first["deliveryId"].(string), "acked", 8*time.Second)
+	armed := scheduleRows(t, ctx, admin, appID, key)
+	if len(armed) != 1 {
+		t.Fatalf("armed schedule: %#v", armed)
+	}
+	nextAt := parseInstant(t, armed[0]["run_at"])
+	extended := commandData(t, mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.extend", "idempotencyKey": "extend", "key": key, "by": "0s",
+	}))
+	if gotAt := parseInstant(t, extended["runAt"]); !gotAt.Equal(nextAt) || !onTheMinute(gotAt) {
+		t.Fatalf("extended runAt %v, want the armed slot %v", gotAt, nextAt)
+	}
+	wait := time.Until(nextAt) + 5*time.Second
+	second := waitCallbackFor(t, got, wait)
+	if second["deliveryId"] == first["deliveryId"] || second["scheduleId"] != scheduleID {
+		t.Fatalf("following slot: %#v", second)
+	}
+}
+
 func TestHTTPRecurrenceRejectsAClockThatIsNotASchedule(t *testing.T) {
 	ctx, h, admin := testServer(t, 0)
 	appID, token := newApp(t, ctx, admin, "http-recur-reject")

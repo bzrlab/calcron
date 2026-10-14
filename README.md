@@ -30,7 +30,7 @@ cd .. && go build ./cmd/calcron
 
 Admin first sends `{"op":"auth","token":"..."}`, then `app.create`. It returns a one-time `cc_<id>_<secret>` application token.
 
-Application commands: `schedule.set`, `schedule.cancel`, `schedule.extend`, `schedule.throttle`, `delivery.ack`, `workflow.start`, `signal`.
+Application commands: `schedule.set`, `schedule.cancel`, `schedule.extend`, `schedule.throttle`, `delivery.ack`, `workflow.start`, `signal`, `callback.set`.
 
 Admin commands: `workflow.publish`, `calendar.set`, `calendar.next`, `calendar.occurrences`, `start-schedule.set`, `dashboard.stats`, `dashboard.list`, `delivery.replay`, `delivery.cancel`, `app.token.rotate`, `app.token.revoke`.
 

@@ -62,7 +62,11 @@ func (s *Server) pushCallback(ctx context.Context, id string) {
 			coalesce((select callback_secret from applications where id=d.application_id), ''),
 			d.attempts`,
 		id, s.id).Scan(&id, &app, &scheduleID, &event, &payload, &callbackURL, &secret, &attempts)
-	if err != nil || callbackURL == "" || secret == "" {
+	if err != nil {
+		return
+	}
+	if callbackURL == "" || secret == "" {
+		s.releaseDelivery(ctx, id)
 		return
 	}
 	if attempts >= 5 {

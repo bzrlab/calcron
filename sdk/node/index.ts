@@ -15,7 +15,12 @@ type ScheduleBase<Events extends object, Name extends EventName<Events>> = {
   chain?: AnyChain<Events>;
   idempotencyKey: string;
 } & PayloadField<Events[Name]>;
-export type Schedule<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = ScheduleBase<Events, Name> & ({ after: string; at?: never } | { at: string; after?: never });
+export type Schedule<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = ScheduleBase<Events, Name> & (
+  | { after: string; at?: never; every?: never; daily?: never; timezone?: never }
+  | { at: string; after?: never; every?: never; daily?: never; timezone?: never }
+  | { every: string; after?: never; at?: never; daily?: never; timezone?: never }
+  | { daily: string; timezone: string; after?: never; at?: never; every?: never }
+);
 
 /** A successor scheduled only after its parent delivery is acknowledged. */
 export type Chain<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = { key: string; event: Name; after: string } & PayloadField<Events[Name]>;
@@ -27,6 +32,7 @@ export type ThrottleResult = { triggered: boolean };
 export type WorkflowResult = { instanceId: string };
 export type SignalResult = { matched: number };
 export type AckResult = { acked: boolean };
+export type CallbackResult = { url: string };
 export type Delivery<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = { id: string; data: Events[Name]; ack: () => Promise<AckResult> };
 const REQUEST_TIMEOUT_MS = 10_000;
 type Reply = { id?: string; ok?: boolean; error?: string; op?: string; deliveryId?: string; event?: string; data?: unknown };
@@ -58,6 +64,7 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   throttle<Name extends EventName<Events>>(throttle: Throttle<Events, Name>) { return this.request<ThrottleResult>({ op: "schedule.throttle", ...throttle }); }
   cancel(key: string, idempotencyKey: string) { return this.request<CancelResult>({ op: "schedule.cancel", key, idempotencyKey }); }
   extend(key: string, by: string, idempotencyKey: string) { return this.request<Pick<ScheduleResult, "runAt">>({ op: "schedule.extend", key, by, idempotencyKey }); }
+  setCallback(url: string, secret: string, idempotencyKey: string) { return this.request<CallbackResult>({ op: "callback.set", url, secret, idempotencyKey }); }
   start<Name extends WorkflowName<Workflows>>(name: Name, idempotencyKey: string, ...[data]: PayloadArgument<Workflows[Name]>) { return this.request<WorkflowResult>({ op: "workflow.start", name, data, idempotencyKey }); }
   signal<Name extends EventName<Events>>(event: Name, correlationKey: string, idempotencyKey: string, ...[data]: PayloadArgument<Events[Name]>) { return this.request<SignalResult>({ op: "signal", event, correlationKey, data, idempotencyKey }); }
   private async open() {

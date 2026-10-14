@@ -82,6 +82,29 @@ test("sends typed application commands and returns their replies", async () => {
   client.close();
 });
 
+test("sends a clock schedule and callback.set", async () => {
+  const { client, socket } = await connected();
+  socket.respond = frame => {
+    const data = frame.op === "callback.set" ? { url: frame.url }
+      : frame.op === "schedule.set" ? { scheduleId: "s-1", runAt: "2026-09-28T10:00:00Z" }
+      : {};
+    socket.reply({ id: frame.id, ok: true, data });
+  };
+  await client.set({ key: "sweep", event: "invoice.due", every: "1m", data: { invoiceId: "42" }, idempotencyKey: "every" });
+  await client.set({ key: "sweep", event: "invoice.due", daily: "09:30", timezone: "Asia/Dhaka", data: { invoiceId: "42" }, idempotencyKey: "daily" });
+  assert.deepEqual(await client.setCallback("https://app.example/callback", "sekret", "callback"), { url: "https://app.example/callback" });
+  const clocks = socket.sent.filter(frame => frame.op === "schedule.set");
+  assert.equal(clocks[0]?.every, "1m");
+  assert.equal(clocks[1]?.daily, "09:30");
+  assert.equal(clocks[1]?.timezone, "Asia/Dhaka");
+  const callback = socket.sent.at(-1);
+  assert.equal(callback?.op, "callback.set");
+  assert.equal(callback?.url, "https://app.example/callback");
+  assert.equal(callback?.secret, "sekret");
+  assert.equal(callback?.idempotencyKey, "callback");
+  client.close();
+});
+
 test("acknowledges deliveries only when the handler calls ack", async () => {
   const { client, socket } = await connected();
   let delivery: { id: string; data: unknown; ack: () => Promise<unknown> } | undefined;
