@@ -309,6 +309,143 @@ func TestHTTPRecurrenceSkipsTheNextSlotUntilCompletionSignal(t *testing.T) {
 	}
 }
 
+func TestHTTPMissedOccurrencesDeliverLatestOnce(t *testing.T) {
+	ctx, h, admin := testServer(t, 0)
+	appID, token := newApp(t, ctx, admin, "http-missed")
+	const secret = "missed-secret"
+	down := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	down.Close()
+
+	var mu sync.Mutex
+	var seen []string
+	first := make(chan map[string]any, 1)
+	hold := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Errorf("body")
+			return
+		}
+		id, _ := body["deliveryId"].(string)
+		mu.Lock()
+		seen = append(seen, id)
+		n := len(seen)
+		mu.Unlock()
+		if n == 1 {
+			first <- body
+			<-hold
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(live.Close)
+
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback", "url": down.URL, "secret": secret,
+	})
+	set := mustCommand(t, h.URL, token, map[string]any{
+		"op": "schedule.set", "idempotencyKey": "arm", "key": "sweep:missed", "event": "payment.reconcile",
+		"every": "1m",
+	})
+	data := commandData(t, set)
+	scheduleID, _ := data["scheduleId"].(string)
+	origin := parseInstant(t, data["runAt"])
+	if scheduleID == "" || !onTheMinute(origin) {
+		t.Fatalf("first occurrence %v", origin)
+	}
+
+	var pendingID string
+	deadline := time.Now().Add(90 * time.Second)
+	for pendingID == "" {
+		for _, row := range listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID}) {
+			if row["status"] == "pending" && row["schedule_id"] == scheduleID {
+				pendingID, _ = row["id"].(string)
+			}
+		}
+		if pendingID != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("first occurrence created no Delivery")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// One later clock slot is enough: acknowledgement used to arm that slot
+	// immediately and deliver it too. Wait it out, then require a single Delivery.
+	readyAt := origin.Add(time.Minute + 2*time.Second)
+	if wait := time.Until(readyAt); wait > 0 {
+		time.Sleep(wait)
+	}
+
+	want := latestMinute(origin, time.Now().UTC())
+	if !want.After(origin) {
+		t.Fatalf("latest due %v is not past the first missed slot %v", want, origin)
+	}
+	rows := scheduleRows(t, ctx, admin, appID, "sweep:missed")
+	if len(rows) != 1 || rows[0]["id"] != scheduleID || rows[0]["status"] != "delivered" {
+		t.Fatalf("schedule while callback was unreachable: %#v", rows)
+	}
+	if got := parseInstant(t, rows[0]["run_at"]); !got.Equal(want) {
+		t.Fatalf("due occurrence %v, want latest %v (first was %v)", got, want, origin)
+	}
+	if n := applicationDeliveryCount(t, ctx, admin, appID); n != 1 {
+		t.Fatalf("missed slots created %d Deliveries", n)
+	}
+	still := waitForApplicationDelivery(t, ctx, admin, appID, pendingID, "pending")
+	if still["attempts"] != float64(0) {
+		t.Fatalf("unreachable callback changed the Delivery: %#v", still)
+	}
+
+	mustCommand(t, h.URL, token, map[string]any{
+		"op": "callback.set", "idempotencyKey": "callback-live", "url": live.URL, "secret": secret,
+	})
+	body := waitCallbackFor(t, first, 5*time.Second)
+	if body["deliveryId"] != pendingID || body["scheduleId"] != scheduleID || body["event"] != "payment.reconcile" {
+		t.Fatalf("delivery when the callback answered: %#v", body)
+	}
+	answered := scheduleRows(t, ctx, admin, appID, "sweep:missed")
+	if len(answered) != 1 || answered[0]["status"] != "delivered" || !parseInstant(t, answered[0]["run_at"]).Equal(want) {
+		t.Fatalf("occurrence at delivery: %#v, want %v", answered, want)
+	}
+	release()
+
+	waitForApplicationDelivery(t, ctx, admin, appID, pendingID, "acked")
+	time.Sleep(1500 * time.Millisecond)
+	mu.Lock()
+	gotIDs := append([]string(nil), seen...)
+	mu.Unlock()
+	if len(gotIDs) != 1 || gotIDs[0] != pendingID {
+		t.Fatalf("callback deliveries: %v", gotIDs)
+	}
+	if n := applicationDeliveryCount(t, ctx, admin, appID); n != 1 {
+		t.Fatalf("catch-up created %d Deliveries", n)
+	}
+	nextRows := scheduleRows(t, ctx, admin, appID, "sweep:missed")
+	if len(nextRows) != 1 || nextRows[0]["id"] != scheduleID || nextRows[0]["status"] != "scheduled" {
+		t.Fatalf("next occurrence: %#v", nextRows)
+	}
+	nextAt := parseInstant(t, nextRows[0]["run_at"])
+	if !nextAt.Equal(want.Add(time.Minute)) || !nextAt.After(time.Now()) {
+		t.Fatalf("next occurrence %v, want %v still ahead", nextAt, want.Add(time.Minute))
+	}
+}
+
+func latestMinute(origin, now time.Time) time.Time {
+	if now.Before(origin) {
+		return origin
+	}
+	steps := now.Sub(origin) / time.Minute
+	return origin.Add(steps * time.Minute)
+}
+
+func applicationDeliveryCount(t *testing.T, ctx context.Context, admin *websocket.Conn, appID string) int {
+	t.Helper()
+	return len(listRows(t, ctx, admin, map[string]any{"name": "deliveries", "applicationId": appID}))
+}
+
 func sameClock(at time.Time, loc *time.Location, hour, minute int) bool {
 	local := at.In(loc)
 	return local.Hour() == hour && local.Minute() == minute && local.Second() == 0 && local.Nanosecond() == 0
