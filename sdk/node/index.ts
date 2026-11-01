@@ -26,6 +26,8 @@ export type Schedule<Events extends object = EventMap, Name extends EventName<Ev
 export type Chain<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = { key: string; event: Name; after: string } & PayloadField<Events[Name]>;
 /** A leading-edge immediate delivery, limited to one trigger per cooldown window. */
 export type Throttle<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = ScheduleBase<Events, Name> & { cooldown: string };
+/** An immediate delivery with an optional key for retrying the command. */
+export type Enqueue<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = { event: Name; idempotencyKey?: string } & PayloadField<Events[Name]>;
 export type ScheduleResult = { scheduleId: string; runAt: string };
 export type CancelResult = { cancelled: boolean };
 export type ThrottleResult = { triggered: boolean };
@@ -61,6 +63,7 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   }
   on<Name extends EventName<Events>>(event: Name, handler: (event: Delivery<Events, Name>) => void | Promise<void>) { this.handlers.set(event, handler as (event: Delivery<Events, EventName<Events>>) => void | Promise<void>); }
   set<Name extends EventName<Events>>(schedule: Schedule<Events, Name>) { return this.request<ScheduleResult>({ op: "schedule.set", ...schedule }); }
+  enqueue<Name extends EventName<Events>>(job: Enqueue<Events, Name>) { return this.request<ScheduleResult>({ op: "enqueue", ...job }); }
   throttle<Name extends EventName<Events>>(throttle: Throttle<Events, Name>) { return this.request<ThrottleResult>({ op: "schedule.throttle", ...throttle }); }
   cancel(key: string, idempotencyKey: string) { return this.request<CancelResult>({ op: "schedule.cancel", key, idempotencyKey }); }
   extend(key: string, by: string, idempotencyKey: string) { return this.request<Pick<ScheduleResult, "runAt">>({ op: "schedule.extend", key, by, idempotencyKey }); }

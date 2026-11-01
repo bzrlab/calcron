@@ -29,3 +29,9 @@ await calcron.set({
 Read the [SDK guide](https://github.com/bzrlab/calcron/blob/main/docs/sdk.md)
 for typed event contracts, every operation, delivery and idempotency rules, and
 Go examples.
+
+## Immediate delivery
+
+Use `await calcron.enqueue({ event: "invoice.due", data: { invoiceId: 42 }, idempotencyKey: "invoice:42:deliver:v1" })`. The event map checks the payload.
+
+Returns `scheduleId` and `runAt` (`ScheduleResult` in Go). The idempotency key is optional; omitting it creates a new immediate schedule on every invocation. Supply a stable key for safe retries. Delivery uses the usual retry and acknowledgement rules. See [the command guide](https://github.com/bzrlab/calcron/blob/main/docs/enqueue.md).

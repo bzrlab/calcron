@@ -70,6 +70,9 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 			return s.cancelDelivery(ctx, f)
 		}
 	}
+	if f.Op == string(operationEnqueue) && f.IdempotencyKey == "" {
+		f.IdempotencyKey = random()
+	}
 	if f.IdempotencyKey == "" {
 		return fail("idempotencyKey required")
 	}
@@ -80,6 +83,8 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 			return fail(err)
 		}
 		switch commandOperation(f.Op) {
+		case operationEnqueue:
+			return s.schedules.Enqueue(ctx, p.app, f)
 		case operationCallbackSet:
 			return s.applications.SetCallback(ctx, p.app, f)
 		case operationScheduleSet:
