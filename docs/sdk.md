@@ -161,3 +161,11 @@ if throttle.Triggered { log.Print(schedule.RunAt) }
 _, err = cron.SignalTyped(ctx, client, PaymentConfirmed, "invoice:42", "invoice:42:paid:v1", struct{ Paid bool `json:"paid"` }{Paid: true})
 return err
 ```
+
+## Connection concurrency
+
+Pass `{ maxInFlight: 4 }` as the third Node constructor argument, or
+`cron.ConnectOptions{MaxInFlight: 4}` as the fourth Go `Connect` argument.
+Omitted or zero means unlimited. Both clients retain the setting on reconnect.
+See [per-connection delivery caps](concurrency.md) for retry, ack, blocked delivery,
+and disconnect behavior.

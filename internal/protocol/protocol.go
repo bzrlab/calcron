@@ -7,6 +7,7 @@ import "encoding/json"
 type Frame struct {
 	ID             string          `json:"id,omitempty"`
 	Op             string          `json:"op"`
+	MaxInFlight    int             `json:"maxInFlight,omitempty"`
 	Token          string          `json:"token,omitempty"`
 	IdempotencyKey string          `json:"idempotencyKey,omitempty"`
 	Key            string          `json:"key,omitempty"`

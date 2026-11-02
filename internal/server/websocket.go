@@ -16,10 +16,12 @@ type hub struct {
 }
 
 type peer struct {
-	conn  *websocket.Conn
-	mu    sync.Mutex
-	app   string
-	admin bool
+	conn        *websocket.Conn
+	mu          sync.Mutex
+	app         string
+	admin       bool
+	maxInFlight int
+	inFlight    map[string]struct{}
 }
 
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +40,12 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(body, &auth) != nil || auth.Op != "auth" {
 		return
 	}
+	if auth.MaxInFlight < 0 {
+		_ = p.send(ctx, reply{ID: auth.ID, Error: "maxInFlight must be a non-negative integer"})
+		return
+	}
+	p.maxInFlight = auth.MaxInFlight
+	p.inFlight = map[string]struct{}{}
 	app, admin, err := s.commands.authenticate(ctx, auth.Token)
 	if err != nil {
 		code := "unavailable"

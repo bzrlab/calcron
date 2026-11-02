@@ -39,6 +39,9 @@ export type Delivery<Events extends object = EventMap, Name extends EventName<Ev
 const REQUEST_TIMEOUT_MS = 10_000;
 type Reply = { id?: string; ok?: boolean; error?: string; op?: string; deliveryId?: string; event?: string; data?: unknown };
 
+/** Connection settings retained across automatic reconnects. Zero or omitted means unlimited. */
+export type ConnectOptions = { maxInFlight?: number };
+
 export class Calcron<Events extends object = EventMap, Workflows extends object = WorkflowMap> {
   private ws!: WebSocket;
   private n = 0;
@@ -50,7 +53,11 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private url: string;
   private token: string;
-  constructor(url: string, token: string) { this.url = url; this.token = token; }
+  private maxInFlight?: number;
+  constructor(url: string, token: string, options: ConnectOptions = {}) {
+    if (options.maxInFlight !== undefined && (!Number.isSafeInteger(options.maxInFlight) || options.maxInFlight < 0)) throw new Error("maxInFlight must be a non-negative safe integer");
+    this.url = url; this.token = token; this.maxInFlight = options.maxInFlight;
+  }
   async connect() { this.stopped = false; await this.open(); }
   close() {
     this.stopped = true;
@@ -80,7 +87,7 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
     this.ws.onmessage = e => { try { this.receive(JSON.parse(e.data)); } catch { this.drop(); } };
     this.ws.onclose = () => this.lost();
     try {
-      await this.request({ op: "auth", token: this.token });
+      await this.request({ op: "auth", token: this.token, ...(this.maxInFlight === undefined ? {} : { maxInFlight: this.maxInFlight }) });
     } catch (error) {
       if (!reconnecting || (error as Error).message === "unauthorized") {
         this.stopped = true;
