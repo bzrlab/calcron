@@ -710,6 +710,8 @@ func dialUnauthorized(t *testing.T, ctx context.Context, rawURL, token string) {
 		t.Fatal(err)
 	}
 	defer c.CloseNow()
+	// Dashboard replies may contain several maximum-size stored payloads.
+	c.SetReadLimit(16 << 20)
 	write(t, ctx, c, map[string]string{"op": "auth", "token": token})
 	if got := read(t, ctx, c); got["error"] != "unauthorized" {
 		t.Fatal("revoked token authenticated")
@@ -735,6 +737,8 @@ func dial(t *testing.T, ctx context.Context, rawURL, token string) *websocket.Co
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Dashboard replies may contain several maximum-size stored payloads.
+	c.SetReadLimit(16 << 20)
 	write(t, ctx, c, map[string]string{"op": "auth", "token": token})
 	if got := read(t, ctx, c); got["ok"] != true {
 		t.Fatal("authentication failed")
