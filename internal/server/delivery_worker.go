@@ -117,11 +117,14 @@ func (s *Server) makeDue(ctx context.Context) {
 func (s *Server) deliver(ctx context.Context) {
 	// Deliveries for disconnected applications are left unqueried: they would otherwise
 	// sort first on every tick without ever advancing, starving the batch of live work.
-	apps := s.hub.connected()
+	if !s.reconcileInFlight(ctx) {
+		return
+	}
+	apps, available, held := s.hub.deliveryCandidates()
 	if len(apps) == 0 {
 		return
 	}
-	rows, err := s.db.Query(ctx, `select id,application_id,coalesce(schedule_id,''),event,payload,attempts from deliveries where status='pending' and next_attempt_at<=now() and application_id=any($1) and (locked_until is null or locked_until<=now()) order by next_attempt_at limit 100`, apps)
+	rows, err := s.db.Query(ctx, `select id,application_id,coalesce(schedule_id,''),event,payload,attempts from deliveries where status='pending' and next_attempt_at<=now() and application_id=any($1) and (application_id=any($2) or id=any($3)) and (locked_until is null or locked_until<=now()) order by next_attempt_at limit 100`, apps, available, held)
 	if err != nil {
 		return
 	}
@@ -133,7 +136,7 @@ func (s *Server) deliver(ctx context.Context) {
 		if rows.Scan(&id, &app, &scheduleID, &event, &payload, &attempts) != nil {
 			continue
 		}
-		peer := s.hub.peer(app)
+		peer, reserved := s.hub.reserve(app, id)
 		if peer == nil {
 			continue
 		}
@@ -142,13 +145,21 @@ func (s *Server) deliver(ctx context.Context) {
 		var claimedAttempts int
 		err = s.db.QueryRow(ctx, `with candidate as (select id from deliveries where id=$1 and status='pending' and next_attempt_at<=now() and (locked_until is null or locked_until<=now()) for update skip locked) update deliveries d set locked_until=now()+interval '15 seconds',lease_owner=$2 from candidate where d.id=candidate.id returning d.id,d.application_id,coalesce(d.schedule_id,''),d.event,d.payload,d.attempts`, id, s.id).Scan(&claimedID, &claimedApp, &claimedSchedule, &claimedEvent, &claimedData, &claimedAttempts)
 		if err != nil {
+			if reserved {
+				s.hub.release(peer, id)
+			}
 			continue
 		}
 		if claimedAttempts >= 5 {
+			if reserved {
+				s.hub.release(peer, id)
+			}
 			_, _ = s.db.Exec(ctx, `update deliveries set status='blocked',locked_until=null,lease_owner=null where id=$1 and lease_owner=$2`, claimedID, s.id)
 			continue
 		}
 		if peer.send(ctx, map[string]any{"op": "delivery", "deliveryId": claimedID, "scheduleId": claimedSchedule, "event": claimedEvent, "data": json.RawMessage(claimedData)}) != nil {
+			s.hub.remove(peer)
+			peer.conn.CloseNow()
 			_, _ = s.db.Exec(ctx, `update deliveries set locked_until=null,lease_owner=null where id=$1 and lease_owner=$2 and status='pending'`, claimedID, s.id)
 			continue
 		}

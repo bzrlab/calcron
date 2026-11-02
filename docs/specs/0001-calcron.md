@@ -88,7 +88,7 @@ The workflow interpreter supports time waits, signal waits, CEL branches, comman
 - Named start schedules create a new workflow instance at each eligible calendar time. Each declares `skip`, `run_once_late`, or `catch_up` for missed occurrences. There is no default.
 - Workflow commands specify target application, event name, and CEL-derived payload. Calcron does not call HTTP APIs, databases, payment providers, or Discord directly.
 - V1 ships Node/TypeScript and Go SDKs. They own protocol authentication, reconnection, request correlation, command acknowledgement, and idempotency-key support.
-- Operational history is append-only and retained indefinitely in V1. Archive or retention policy follows measured database growth.
+- Workflow, signal and start-schedule history remains retained indefinitely. Finished schedules, deliveries, their history and idempotency responses expire under the configurable retention policy in [ADR 0027](../adr/0027-bounded-finished-work-retention.md), following measured growth in #1 and spec #14.
 - The single dashboard is operational. It provides live inspection plus cancel, retry, and replay. It has no workflow-definition editor in V1.
 - The initial module boundaries are server and protocol, authentication and applications, direct scheduler, workflow interpreter, calendars, delivery, PostgreSQL store and migrations, dashboard, Node SDK, Go SDK, and deployment assets.
 

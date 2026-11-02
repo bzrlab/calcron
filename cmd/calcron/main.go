@@ -19,6 +19,7 @@ func main() {
 		Migration:       calcron.InitialMigration,
 		MaxPayloadBytes: payloadLimit(),
 		RetryBase:       duration("CALCRON_RETRY_BASE", time.Second),
+		RetentionPeriod: duration("CALCRON_RETENTION", 30*24*time.Hour),
 	})
 	if err != nil {
 		log.Fatal(err)

@@ -16,6 +16,8 @@ explains the command surface, delivery semantics, idempotency, and complete
 examples. [Enqueue](docs/enqueue.md) accepts immediate work with an optional idempotency key.
 
 See [payload limits](docs/payload-limits.md) for configuration and transport errors.
+See [retention configuration and replay expiry](docs/retention.md) for automatic
+cleanup of finished work.
 
 ## Admin dashboard
 
