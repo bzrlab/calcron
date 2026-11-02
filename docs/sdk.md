@@ -15,10 +15,11 @@ Idempotency responses expire after the configured [retention window](retention.m
 
 ## Application operations
 
-Every state-changing operation requires an application-supplied idempotency key. Durations use Go duration syntax such as `30s`, `5m`, or `24h`. An absolute deadline uses an RFC 3339 UTC timestamp such as `2026-09-28T10:00:00Z`.
+Every state-changing operation except `enqueue` requires an application-supplied idempotency key. For `enqueue`, supply one when the caller may retry; omitting it creates an independent immediate schedule on every call. See [the enqueue command](enqueue.md). Durations use Go duration syntax such as `30s`, `5m`, or `24h`. An absolute deadline uses an RFC 3339 UTC timestamp such as `2026-09-28T10:00:00Z`.
 
 | Operation | What it does | Result |
 | --- | --- | --- |
+| `enqueue` | Creates an immediate one-off schedule with a generated unique schedule key, JSON `data`, and optional `idempotencyKey`. | `scheduleId`, `runAt` |
 | `set` | Creates or replaces the application-scoped schedule named by `key`. Provide exactly one of `after`, `at`, `every`, or `daily`. `every` is a whole number of minutes. `daily` is an `HH:MM` clock time plus an IANA `timezone`. | `scheduleId`, `runAt` |
 | `setCallback` | Registers the callback URL and secret used for Delivery when the application has no live WebSocket. | `url` |
 | `cancel` | Cancels the named schedule; cancelling an absent schedule is safe. | `cancelled` |
@@ -33,12 +34,14 @@ Every state-changing operation requires an application-supplied idempotency key.
 
 | SDK | Method | Parameters |
 | --- | --- | --- |
+| Node | `enqueue(job)` | `event`, optional `data` / `idempotencyKey` → `ScheduleResult` |
 | Node | `set(schedule)` | `key`, `event`, exactly one of `after` / `at` / `every` / `daily` (`daily` also needs `timezone`), optional `data` / `chain`, `idempotencyKey` → `ScheduleResult` |
 | Node | `setCallback(url, secret, idempotencyKey)` | callback URL and secret → `{ url }` |
 | Node | `throttle(request)` | `key`, `event`, `cooldown`, optional `data` / `chain`, `idempotencyKey` → `ThrottleResult` |
 | Node | `cancel(key, idempotencyKey)` / `extend(key, by, idempotencyKey)` | schedule key and mutation → `CancelResult` / `{ runAt }` |
 | Node | `start(name, idempotencyKey, data?)` / `signal(event, correlationKey, idempotencyKey, data?)` | workflow start or correlated completion → `WorkflowResult` / `SignalResult` |
 | Node | `on(event, handler)` | handler receives `{ id, data, ack() }`; `ack()` returns `AckResult` |
+| Go | `Enqueue(ctx, Enqueue)` / `EnqueueTyped(ctx, client, TypedEnqueue[T])` | `Event`, `Data`, optional `IdempotencyKey` → `ScheduleResult, error` |
 | Go | `Set(ctx, Schedule)` / `SetCallback(ctx, url, secret, idempotencyKey)` / `Throttle(ctx, Throttle)` | Same fields as Node; `Chain` is `{ Key, Event, After, Data }` → typed result and `error` |
 | Go | `Cancel`, `Extend`, `Start`, `Signal` | Same positional fields as Node, prefixed with `context.Context` → typed result and `error` |
 | Go | `On(event, func(Event))` | `Event` has `ID`, `Name`, `Data`; `Ack(ctx)` returns `AckResult, error` |
@@ -68,7 +71,7 @@ await calcron.start("invoice-lifecycle", "invoice:42:start:v1", { invoiceId: "42
 ```
 
 Go binds each event-name value to its payload through generics. Declare the
-value once, then use `OnTyped`, `SetTyped`, `ThrottleTyped`, and `SignalTyped`;
+value once, then use `OnTyped`, `SetTyped`, `EnqueueTyped`, `ThrottleTyped`, and `SignalTyped`;
 the compiler infers the payload from that value and `TypedDelivery` is already
 decoded. `EventOf` is the Go equivalent of the TypeScript event map. A
 `TypedChain` may use a different `EventOf` declaration from its parent, so its

@@ -5,3 +5,11 @@ Every state-changing command and signal includes an application-supplied idempot
 [ADR 0027](0027-bounded-finished-work-retention.md) bounds stored responses to
 the configured retention window (30 days by default). Reusing an expired key
 can execute the command again.
+
+## Enqueue exception (platform runner spec #14)
+
+`enqueue` accepts an optional caller-supplied key. When omitted, Calcron generates
+a unique key before entering the same application-scoped advisory-lock and
+stored-response path. Each keyless invocation creates an independent immediate
+schedule; a caller that may retry must supply a stable key. Other state-changing
+commands still require a caller-supplied key.

@@ -105,6 +105,18 @@ func SetTyped[T any](ctx context.Context, c *Client, s TypedSchedule[T]) (Schedu
 	return c.Set(ctx, Schedule{Key: s.Key, Event: s.Event.name, After: s.After, At: s.At, Every: s.Every, Daily: s.Daily, Timezone: s.Timezone, Data: s.Data, Chain: chain, IdempotencyKey: s.IdempotencyKey})
 }
 
+// TypedEnqueue pairs an immediate delivery with its event's payload type.
+type TypedEnqueue[T any] struct {
+	Event          EventType[T]
+	Data           T
+	IdempotencyKey string
+}
+
+// EnqueueTyped enqueues a payload tied to its event without a deadline or schedule key.
+func EnqueueTyped[T any](ctx context.Context, c *Client, job TypedEnqueue[T]) (ScheduleResult, error) {
+	return c.Enqueue(ctx, Enqueue{Event: job.Event.name, Data: job.Data, IdempotencyKey: job.IdempotencyKey})
+}
+
 // TypedThrottle pairs a throttled event with the matching payload type.
 type TypedThrottle[T any] struct {
 	Key, Cooldown, IdempotencyKey string
@@ -165,6 +177,13 @@ type Schedule struct {
 	Key, Event, After, At, Every, Daily, Timezone, IdempotencyKey string
 	Data                                                          any
 	Chain                                                         *Chain
+}
+
+// Enqueue describes an immediate delivery. IdempotencyKey is optional; supply it for safe retries.
+type Enqueue struct {
+	Event          string
+	Data           any
+	IdempotencyKey string
 }
 
 // Chain creates a successor schedule after its parent delivery is acknowledged.
@@ -239,6 +258,12 @@ func (c *Client) Set(ctx context.Context, s Schedule) (ScheduleResult, error) {
 	}
 	return requestAs[ScheduleResult](c, ctx, map[string]any{"op": "schedule.set", "key": s.Key, "event": s.Event, "after": s.After, "at": s.At, "every": s.Every, "daily": s.Daily, "timezone": s.Timezone, "data": s.Data, "chain": s.Chain, "idempotencyKey": s.IdempotencyKey})
 }
+
+// Enqueue creates an immediate delivery using the ordinary lease, retry, and acknowledgement rules.
+func (c *Client) Enqueue(ctx context.Context, job Enqueue) (ScheduleResult, error) {
+	return requestAs[ScheduleResult](c, ctx, map[string]any{"op": "enqueue", "event": job.Event, "data": job.Data, "idempotencyKey": job.IdempotencyKey})
+}
+
 func (c *Client) SetCallback(ctx context.Context, callbackURL, secret, idempotencyKey string) (CallbackResult, error) {
 	return requestAs[CallbackResult](c, ctx, map[string]any{"op": "callback.set", "url": callbackURL, "secret": secret, "idempotencyKey": idempotencyKey})
 }

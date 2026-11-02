@@ -9,9 +9,10 @@ or an admin purge command: each replica removes at most 100 rows per table per
 tick, skips locked rows, applies timeouts, and logs committed counts. This bounds
 interference with delivery processing while allowing a backlog to drain.
 
-Preserve pending, blocked, leased, scheduled and awaiting-completion work, all
-referencing deliveries, and history for subjects still present. Workflow, signal
-and start-schedule history remains retained indefinitely. Terminal status changes
+Preserve pending, blocked, leased, scheduled and awaiting-completion work. Keep
+schedules while deliveries reference them, deliveries tied to unfinished workflows,
+and history for subjects still present. Workflow, signal and start-schedule
+history remains retained indefinitely. Terminal status changes
 start a fresh delivery retention window; legacy deliveries receive a full window
 at migration because cancellation timestamps were not recorded.
 
