@@ -34,3 +34,9 @@ These are inbound command limits. They do not truncate existing stored data,
 limit dashboard replies, or change workflow execution and delivery semantics.
 Changing the setting affects new command submissions, including payloads that
 will later be used by recurring start schedules.
+
+The Go SDK defaults to a 64 KiB expected delivery payload plus 64 KiB for the
+JSON envelope. When increasing the server limit, also set the Go connection's
+`cron.ConnectOptions{MaxPayloadBytes: ...}` to the expected payload limit. This
+receive setting applies to the initial socket and every reconnect. Allow for
+larger existing stored deliveries when lowering server submission limits.
