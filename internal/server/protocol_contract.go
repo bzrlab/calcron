@@ -74,15 +74,18 @@ func validateAdminOperation(op string) string {
 func validateApplicationOperation(op, idempotencyKey string) string {
 	// Keep this order stable: callers have always received the idempotency error
 	// before command validation.
-	if idempotencyKey == "" && commandOperation(op) != operationEnqueue {
+	if idempotencyKey == "" && requiresIdempotencyKey(op) {
 		return "idempotencyKey required"
 	}
 	spec, found := classifyCommandOperation(op)
 	if !found || spec.audience != applicationCommand {
 		return "unknown op"
 	}
-	if spec.requiresIdempotency && idempotencyKey == "" {
-		return "idempotencyKey required"
-	}
 	return ""
+}
+
+func requiresIdempotencyKey(op string) bool {
+	spec, found := classifyCommandOperation(op)
+	// Preserve the missing-key error for unknown application operations.
+	return !found || spec.audience != applicationCommand || spec.requiresIdempotency
 }

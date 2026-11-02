@@ -213,6 +213,7 @@ alter table schedules add column if not exists awaiting_signal boolean not null 
 -- Terminal age is measured from acknowledgement/cancellation, never creation.
 -- A constant default gives existing rows a conservative window without rewriting them.
 alter table deliveries add column if not exists finished_at timestamptz default now();
+alter table deliveries alter column finished_at drop default;
 create or replace function deliveries_set_finished_at() returns trigger language plpgsql as $$
 begin
   if TG_OP = 'INSERT' then
@@ -226,12 +227,9 @@ begin
   end if;
   return NEW;
 end $$;
-do $$ begin
-  if not exists (select 1 from pg_trigger where tgrelid='deliveries'::regclass and tgname='deliveries_finished_at') then
-    create trigger deliveries_finished_at before insert or update on deliveries
-    for each row execute function deliveries_set_finished_at();
-  end if;
-end $$;
+drop trigger if exists deliveries_finished_at on deliveries;
+create trigger deliveries_finished_at before insert or update on deliveries
+for each row execute function deliveries_set_finished_at();
 create index if not exists deliveries_retention_idx on deliveries(finished_at,id) where status in ('acked','cancelled');
 create index if not exists schedules_retention_idx on schedules(updated_at,id) where status in ('delivered','cancelled') and not awaiting_signal;
 create index if not exists history_retention_idx on history(created_at,id) where subject_type in ('schedule','delivery');

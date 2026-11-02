@@ -24,7 +24,8 @@ retry changes the event or payload. Keys share the existing application-wide
 namespace with other commands. Use a distinct key for each business intent.
 
 Without a key, every invocation creates a new schedule with a generated unique
-schedule key. Retrying after an unknown response can therefore create another
+schedule key and no unused idempotency response. Retrying after an unknown
+response can therefore create another
 job; supply a stable key whenever the caller may retry. Enqueue always creates
 an immediate one-off schedule; scheduling, recurrence and chain fields belong
 to `schedule.set` and are not used by enqueue.

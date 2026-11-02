@@ -3,6 +3,7 @@ package retention
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -20,16 +21,6 @@ func Cleanup(ctx context.Context, db *pgxpool.Pool, cutoff time.Time, limit int)
 	var counts Counts
 	if limit <= 0 {
 		return counts, fmt.Errorf("retention batch size must be positive")
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	tx, err := db.Begin(ctx)
-	if err != nil {
-		return Counts{}, err
-	}
-	defer tx.Rollback(context.Background())
-	if _, err = tx.Exec(ctx, `set local lock_timeout = '50ms'; set local statement_timeout = '200ms'`); err != nil {
-		return Counts{}, err
 	}
 	queries := []struct {
 		sql   string
@@ -58,15 +49,44 @@ func Cleanup(ctx context.Context, db *pgxpool.Pool, cutoff time.Time, limit int)
  order by created_at,application_id,key limit $2 for update skip locked
  ) delete from idempotency i using expired e where i.application_id=e.application_id and i.key=e.key`, &counts.Idempotency},
 	}
+	var failures []error
 	for _, query := range queries {
-		tag, err := tx.Exec(ctx, query.sql, cutoff, limit)
+		// Pool pressure gets its own bounded wait, independent of query execution.
+		acquireCtx, cancelAcquire := context.WithTimeout(ctx, time.Second)
+		conn, err := db.Acquire(acquireCtx)
+		cancelAcquire()
 		if err != nil {
-			return Counts{}, err
+			failures = append(failures, err)
+			continue
 		}
-		*query.count = tag.RowsAffected()
+		affected, err := cleanupTable(ctx, conn, query.sql, cutoff, limit)
+		conn.Release()
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		*query.count = affected
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Counts{}, err
+	return counts, errors.Join(failures...)
+}
+
+func cleanupTable(ctx context.Context, conn *pgxpool.Conn, sql string, cutoff time.Time, limit int) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return 0, err
 	}
-	return counts, nil
+	defer tx.Rollback(context.Background())
+	if _, err = tx.Exec(ctx, `set local lock_timeout = '50ms'; set local statement_timeout = '200ms'`); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, sql, cutoff, limit)
+	if err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/bzrlab/calcron"
 )
 
 func (s *Server) httpCommand(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +32,7 @@ func (s *Server) httpCommand(w http.ResponseWriter, r *http.Request) {
 		writeCommand(w, http.StatusUnauthorized, reply{Error: "unauthorized"})
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxPayloadBytes+(64<<10)))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxPayloadBytes+calcron.EnvelopeBytes))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bzrlab/calcron"
 	"github.com/coder/websocket"
 )
 
@@ -108,8 +109,10 @@ func SetTyped[T any](ctx context.Context, c *Client, s TypedSchedule[T]) (Schedu
 
 // TypedEnqueue pairs an immediate delivery with its event's payload type.
 type TypedEnqueue[T any] struct {
-	Event          EventType[T]
-	Data           T
+	Event EventType[T]
+	Data  T
+	// IdempotencyKey must be reused for retries of the same business intent.
+	// Empty means a new job on every call; retrying after a timeout can duplicate it.
 	IdempotencyKey string
 }
 
@@ -182,8 +185,10 @@ type Schedule struct {
 
 // Enqueue describes an immediate delivery. IdempotencyKey is optional; supply it for safe retries.
 type Enqueue struct {
-	Event          string
-	Data           any
+	Event string
+	Data  any
+	// IdempotencyKey must be reused for retries of the same business intent.
+	// Empty means a new job on every call; retrying after a timeout can duplicate it.
 	IdempotencyKey string
 }
 
@@ -226,7 +231,7 @@ func Connect(ctx context.Context, url, token string, options ...ConnectOptions) 
 	if opts.MaxPayloadBytes == 0 {
 		opts.MaxPayloadBytes = 64 << 10
 	}
-	if opts.MaxPayloadBytes < 0 || opts.MaxPayloadBytes > (1<<63-1)-(64<<10)-1 {
+	if opts.MaxPayloadBytes < 0 || opts.MaxPayloadBytes > (1<<63-1)-calcron.EnvelopeBytes-1 {
 		return nil, errors.New("MaxPayloadBytes must be positive and leave room for 65536 envelope bytes")
 	}
 	c, _, err := websocket.Dial(ctx, url, nil)
@@ -242,7 +247,7 @@ func Connect(ctx context.Context, url, token string, options ...ConnectOptions) 
 	return x, nil
 }
 func authenticate(ctx context.Context, c *websocket.Conn, token string, options ConnectOptions) error {
-	c.SetReadLimit(options.MaxPayloadBytes + (64 << 10))
+	c.SetReadLimit(options.MaxPayloadBytes + calcron.EnvelopeBytes)
 	b, _ := json.Marshal(struct {
 		Op          string `json:"op"`
 		Token       string `json:"token"`

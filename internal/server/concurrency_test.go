@@ -118,15 +118,20 @@ func TestConnectionCapBlockedDeliveryRetainsSlotUntilCancelled(t *testing.T) {
 func TestConnectionCapValidation(t *testing.T) {
 	ctx, h, admin := testServer(t, 0)
 	_, token := newApp(t, ctx, admin, "cap-validation")
-	c, _, err := websocket.Dial(ctx, "ws"+h.URL[4:]+"/ws", nil)
-	if err != nil {
-		t.Fatal(err)
+	for _, cap := range []any{-1, 1.5, 1e30, "1", true} {
+		t.Run(fmt.Sprint(cap), func(t *testing.T) {
+			c, _, err := websocket.Dial(ctx, "ws"+h.URL[4:]+"/ws", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.CloseNow()
+			write(t, ctx, c, map[string]any{"id": "invalid-cap", "op": "auth", "token": token, "maxInFlight": cap})
+			if got := read(t, ctx, c); got["error"] != "maxInFlight must be a non-negative integer" || got["id"] != "invalid-cap" {
+				t.Fatalf("invalid cap: %#v", got)
+			}
+		})
 	}
-	defer c.CloseNow()
-	write(t, ctx, c, map[string]any{"op": "auth", "token": token, "maxInFlight": -1})
-	if got := read(t, ctx, c); got["ok"] != false || got["error"] != "maxInFlight must be a non-negative integer" {
-		t.Fatalf("negative cap: %#v", got)
-	}
+
 }
 
 func TestConnectionCapGoSDKResumesAfterAck(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bzrlab/calcron"
 	"github.com/bzrlab/calcron/internal/application"
 	"github.com/bzrlab/calcron/internal/calendar"
 	"github.com/bzrlab/calcron/internal/delivery"
@@ -47,8 +48,10 @@ type Server struct {
 	done           chan struct{}
 	closeOnce      sync.Once
 
-	retentionPeriod time.Duration
-	maxPayloadBytes int64
+	nextRetention     time.Time
+	retentionFailures uint64
+	retentionPeriod   time.Duration
+	maxPayloadBytes   int64
 }
 
 func New(ctx context.Context, c Config) (*Server, error) {
@@ -56,7 +59,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 		return nil, errors.New("DATABASE_URL and CALCRON_ADMIN_TOKEN required")
 	}
 	if c.RetentionPeriod < 0 {
-		return nil, errors.New("retention period must be positive")
+		return nil, errors.New("retention period must not be negative")
 	}
 	if c.RetentionPeriod == 0 {
 		c.RetentionPeriod = retention.DefaultPeriod
@@ -64,7 +67,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	if c.MaxPayloadBytes == 0 {
 		c.MaxPayloadBytes = 64 << 10
 	}
-	if c.MaxPayloadBytes < 0 || c.MaxPayloadBytes > (1<<63-1)-(64<<10)-1 {
+	if c.MaxPayloadBytes < 0 || c.MaxPayloadBytes > (1<<63-1)-calcron.EnvelopeBytes-1 {
 		return nil, errors.New("MaxPayloadBytes must be positive and leave room for 65536 envelope bytes")
 	}
 	db, err := pgxpool.New(ctx, c.DatabaseURL)
@@ -152,12 +155,19 @@ func (s *Server) cleanupExpiredThrottles(ctx context.Context) {
 }
 
 func (s *Server) cleanupRetention(ctx context.Context) {
+	if time.Now().Before(s.nextRetention) {
+		return
+	}
+	s.nextRetention = time.Now().Add(time.Minute)
 	counts, err := retention.Cleanup(ctx, s.db, time.Now().Add(-s.retentionPeriod), retention.BatchSize)
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Printf("retention cleanup: %v", err)
+			s.retentionFailures++
+			log.Printf("ERROR retention cleanup: consecutive_failures=%d: %v", s.retentionFailures, err)
 		}
-		return
+	}
+	if err == nil {
+		s.retentionFailures = 0
 	}
 	if counts != (retention.Counts{}) {
 		log.Printf("retention cleanup: deliveries=%d schedules=%d history=%d idempotency=%d", counts.Deliveries, counts.Schedules, counts.History, counts.Idempotency)

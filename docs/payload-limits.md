@@ -23,7 +23,7 @@ a stored response; ordinary accepted retries retain their existing behavior.
 
 Both transports also bound the **whole command** to the configured payload
 limit plus 65536 envelope bytes. This includes unknown fields and whitespace,
-and applies to WebSocket authentication frames as well. HTTP returns status 413
+and applies after WebSocket authentication. HTTP returns status 413
 with the same `payload too large` JSON error (after authentication). WebSocket
 closes with status 1009 (`Message Too Big`) and reason `payload too large`;
 there is no command reply or correlation ID for this transport error. Reconnect
@@ -40,3 +40,6 @@ JSON envelope. When increasing the server limit, also set the Go connection's
 `cron.ConnectOptions{MaxPayloadBytes: ...}` to the expected payload limit. This
 receive setting applies to the initial socket and every reconnect. Allow for
 larger existing stored deliveries when lowering server submission limits.
+
+WebSocket authentication frames have a separate 4 KiB limit, independent of the
+configured payload size. The full command budget applies after authentication.

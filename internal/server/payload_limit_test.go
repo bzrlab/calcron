@@ -139,3 +139,17 @@ func TestPayloadLimitInvalidConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthenticationBudgetIsIndependentOfPayloadLimit(t *testing.T) {
+	ctx, h, _ := testServer(t, 0, func(c *server.Config) { c.MaxPayloadBytes = 1 << 20 })
+	c, _, err := websocket.Dial(ctx, "ws"+h.URL[4:]+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	write(t, ctx, c, map[string]any{"op": "auth", "token": strings.Repeat("x", 4096)})
+	_, _, err = c.Read(ctx)
+	if websocket.CloseStatus(err) != websocket.StatusMessageTooBig {
+		t.Fatalf("oversized auth: %v", err)
+	}
+}

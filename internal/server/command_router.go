@@ -42,7 +42,7 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 		if err := validateAdminOperation(f.Op); err != "" {
 			return fail(err)
 		}
-	} else if f.Op != string(operationEnqueue) && f.IdempotencyKey == "" {
+	} else if requiresIdempotencyKey(f.Op) && f.IdempotencyKey == "" {
 		return fail("idempotencyKey required")
 	}
 	s := r.server
@@ -77,11 +77,8 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 			return s.cancelDelivery(ctx, f)
 		}
 	}
-	if f.Op == string(operationEnqueue) && f.IdempotencyKey == "" {
-		f.IdempotencyKey = random()
-	}
-	if f.IdempotencyKey == "" {
-		return fail("idempotencyKey required")
+	if !requiresIdempotencyKey(f.Op) && f.IdempotencyKey == "" {
+		return s.schedules.Enqueue(ctx, p.app, f)
 	}
 	return s.serial(ctx, p.app, f.IdempotencyKey, func() reply {
 		// Keep validation inside serialization. A retried idempotency key must

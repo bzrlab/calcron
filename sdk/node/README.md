@@ -42,3 +42,9 @@ Use `new Calcron(url, token, { maxInFlight: 4 })` to cap distinct unacknowledged
 deliveries on this connection. Omitted or zero means unlimited. The cap is
 retained on reconnect; retries reuse a slot and still require idempotent handlers.
 See [delivery cap semantics](https://github.com/bzrlab/calcron/blob/main/docs/concurrency.md).
+
+The Node client uses Node 22+'s built-in `WebSocket`, not the `ws` package.
+It intentionally has no SDK receive-limit option; incoming message limits are
+controlled by the Node runtime. Raising the server payload limit requires no
+matching Node SDK setting. Check the runtime's capacity for larger messages;
+the server's configured payload limit still applies to commands.

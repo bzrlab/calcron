@@ -349,3 +349,82 @@ func TestCleanupPreservesDeliveriesReferencedByUnfinishedWorkflow(t *testing.T) 
 		t.Fatalf("finished workflow delivery did not expire: %+v", counts)
 	}
 }
+
+func TestCleanupTableLockDoesNotStarveOtherTables(t *testing.T) {
+	ctx, db := database(t)
+	exec(t, ctx, db, `insert into applications(id,namespace) values('app','app');
+ insert into idempotency(application_id,key,response,created_at) values('app','old','{}',now()-interval '60 days')`)
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `lock table deliveries in access exclusive mode`); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := retention.Cleanup(ctx, db, time.Now().Add(-30*24*time.Hour), 100)
+	if err == nil {
+		t.Fatal("expected delivery table lock failure")
+	}
+	if counts.Idempotency != 1 {
+		t.Fatalf("unrelated cleanup starved: %+v, %v", counts, err)
+	}
+}
+
+func TestKeylessEnqueueDoesNotStoreReplayResponses(t *testing.T) {
+	ctx, db := database(t)
+	config := db.Config().ConnConfig.ConnString()
+	s, err := server.New(ctx, server.Config{DatabaseURL: config, AdminToken: "admin", Migration: calcron.InitialMigration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	h := httptest.NewServer(s.Handler())
+	defer h.Close()
+	c, _, err := websocket.Dial(ctx, "ws"+h.URL[4:]+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	send := func(command any) map[string]any {
+		t.Helper()
+		if err := wsjson.Write(ctx, c, command); err != nil {
+			t.Fatal(err)
+		}
+		var response map[string]any
+		if err := wsjson.Read(ctx, c, &response); err != nil {
+			t.Fatal(err)
+		}
+		if response["ok"] != true {
+			t.Fatalf("command failed: %#v", response)
+		}
+		return response
+	}
+	send(map[string]any{"op": "auth", "token": "admin"})
+	app := send(map[string]any{"op": "app.create", "namespace": "keyless", "name": "keyless"})["data"].(map[string]any)
+	for i := 0; i < 2; i++ {
+		body := strings.NewReader(`{"op":"enqueue","event":"job"}`)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.URL+"/commands", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+app["token"].(string))
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result map[string]any
+		err = json.NewDecoder(response.Body).Decode(&result)
+		response.Body.Close()
+		if err != nil || result["ok"] != true {
+			t.Fatalf("enqueue: %#v %v", result, err)
+		}
+	}
+	var cached, jobs int
+	if err := db.QueryRow(ctx, `select (select count(*) from idempotency),(select count(*) from schedules)`).Scan(&cached, &jobs); err != nil {
+		t.Fatal(err)
+	}
+	if cached != 0 || jobs != 2 {
+		t.Fatalf("replay rows=%d jobs=%d", cached, jobs)
+	}
+}
