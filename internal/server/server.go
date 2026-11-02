@@ -22,32 +22,40 @@ import (
 type Config struct {
 	DatabaseURL, AdminToken, Migration string
 	RetryBase                          time.Duration
+	MaxPayloadBytes                    int64
 }
 
 // Server coordinates command handling, asynchronous delivery, and workflows.
 type Server struct {
-	db             *pgxpool.Pool
-	admin          string
-	hub            *hub
-	id             string
-	retryBase      time.Duration
-	commands       *commandRouter
-	dashboardReads *dashboardRead
-	workflows      *workflowEngine
-	applications   *application.Module
-	calendars      *calendar.Module
-	schedules      *schedule.Module
-	deliveryAdmin  *delivery.Admin
-	callbackHTTP   *http.Client
-	callbackWait   sync.WaitGroup
-	cancel         context.CancelFunc
-	done           chan struct{}
-	closeOnce      sync.Once
+	db              *pgxpool.Pool
+	admin           string
+	hub             *hub
+	id              string
+	retryBase       time.Duration
+	maxPayloadBytes int64
+	commands        *commandRouter
+	dashboardReads  *dashboardRead
+	workflows       *workflowEngine
+	applications    *application.Module
+	calendars       *calendar.Module
+	schedules       *schedule.Module
+	deliveryAdmin   *delivery.Admin
+	callbackHTTP    *http.Client
+	callbackWait    sync.WaitGroup
+	cancel          context.CancelFunc
+	done            chan struct{}
+	closeOnce       sync.Once
 }
 
 func New(ctx context.Context, c Config) (*Server, error) {
 	if c.DatabaseURL == "" || c.AdminToken == "" {
 		return nil, errors.New("DATABASE_URL and CALCRON_ADMIN_TOKEN required")
+	}
+	if c.MaxPayloadBytes == 0 {
+		c.MaxPayloadBytes = 64 << 10
+	}
+	if c.MaxPayloadBytes < 0 || c.MaxPayloadBytes > (1<<63-1)-(64<<10)-1 {
+		return nil, errors.New("MaxPayloadBytes must be positive and leave room for 65536 envelope bytes")
 	}
 	db, err := pgxpool.New(ctx, c.DatabaseURL)
 	if err != nil {
@@ -57,7 +65,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase}
+	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase, maxPayloadBytes: c.MaxPayloadBytes}
 	s.commands = newCommandRouter(s)
 	s.dashboardReads = newDashboardRead(db, s.hub)
 	s.workflows = newWorkflowEngine(s)

@@ -30,8 +30,13 @@ func (s *Server) httpCommand(w http.ResponseWriter, r *http.Request) {
 		writeCommand(w, http.StatusUnauthorized, reply{Error: "unauthorized"})
 		return
 	}
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxPayloadBytes+(64<<10)))
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCommand(w, http.StatusRequestEntityTooLarge, reply{Error: "payload too large"})
+			return
+		}
 		writeCommand(w, http.StatusBadRequest, reply{Error: "bad json"})
 		return
 	}
