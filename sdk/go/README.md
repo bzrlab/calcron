@@ -20,3 +20,9 @@ cron.OnTyped(client, InvoiceDueEvent, func(event cron.TypedDelivery[InvoiceDue])
 
 Read the [SDK guide](https://github.com/bzrlab/calcron/blob/main/docs/sdk.md)
 for every operation, delivery and idempotency rules, and the complete example.
+
+## Immediate delivery
+
+Use `client.Enqueue(ctx, cron.Enqueue{Event: "invoice.due", Data: payload, IdempotencyKey: "invoice:42:deliver:v1"})`, or `cron.EnqueueTyped(ctx, client, cron.TypedEnqueue[Payload]{Event: event, Data: payload, IdempotencyKey: key})` for a typed event.
+
+Returns `scheduleId` and `runAt` (`ScheduleResult` in Go). The idempotency key is optional; omitting it creates a new immediate schedule on every invocation. Supply a stable key for safe retries. Delivery uses the usual retry and acknowledgement rules. See [the command guide](https://github.com/bzrlab/calcron/blob/main/docs/enqueue.md).
