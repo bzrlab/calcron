@@ -209,3 +209,28 @@ alter table applications add column if not exists callback_secret text;
 
 -- Set while an acknowledged occurrence has not received its completion Signal.
 alter table schedules add column if not exists awaiting_signal boolean not null default false;
+
+-- Terminal age is measured from acknowledgement/cancellation, never creation.
+-- A constant default gives existing rows a conservative window without rewriting them.
+alter table deliveries add column if not exists finished_at timestamptz default now();
+alter table deliveries alter column finished_at drop default;
+create or replace function deliveries_set_finished_at() returns trigger language plpgsql as $$
+begin
+  if TG_OP = 'INSERT' then
+    if NEW.status in ('acked','cancelled') then
+      NEW.finished_at := coalesce(NEW.finished_at, NEW.acked_at, now());
+    else
+      NEW.finished_at := null;
+    end if;
+  elsif NEW.status is distinct from OLD.status then
+    NEW.finished_at := case when NEW.status in ('acked','cancelled') then now() else null end;
+  end if;
+  return NEW;
+end $$;
+drop trigger if exists deliveries_finished_at on deliveries;
+create trigger deliveries_finished_at before insert or update on deliveries
+for each row execute function deliveries_set_finished_at();
+create index if not exists deliveries_retention_idx on deliveries(finished_at,id) where status in ('acked','cancelled');
+create index if not exists schedules_retention_idx on schedules(updated_at,id) where status in ('delivered','cancelled') and not awaiting_signal;
+create index if not exists history_retention_idx on history(created_at,id) where subject_type in ('schedule','delivery');
+create index if not exists idempotency_retention_idx on idempotency(created_at,application_id,key);

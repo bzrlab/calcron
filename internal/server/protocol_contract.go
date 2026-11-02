@@ -19,6 +19,7 @@ const (
 	operationDeliveryReplay      commandOperation = "delivery.replay"
 	operationDeliveryCancel      commandOperation = "delivery.cancel"
 
+	operationEnqueue          commandOperation = "enqueue"
 	operationCallbackSet      commandOperation = "callback.set"
 	operationScheduleSet      commandOperation = "schedule.set"
 	operationScheduleCancel   commandOperation = "schedule.cancel"
@@ -51,6 +52,8 @@ func classifyCommandOperation(op string) (commandSpec, bool) {
 		operationCalendarOccurrences, operationStartScheduleSet, operationDashboardStats,
 		operationDashboardList, operationDeliveryReplay, operationDeliveryCancel:
 		return commandSpec{audience: adminCommand}, true
+	case operationEnqueue:
+		return commandSpec{audience: applicationCommand}, true
 	case operationCallbackSet, operationScheduleSet, operationScheduleCancel, operationScheduleExtend,
 		operationScheduleThrottle, operationDeliveryAck, operationWorkflowStart,
 		operationSignal:
@@ -71,15 +74,18 @@ func validateAdminOperation(op string) string {
 func validateApplicationOperation(op, idempotencyKey string) string {
 	// Keep this order stable: callers have always received the idempotency error
 	// before command validation.
-	if idempotencyKey == "" {
+	if idempotencyKey == "" && requiresIdempotencyKey(op) {
 		return "idempotencyKey required"
 	}
 	spec, found := classifyCommandOperation(op)
 	if !found || spec.audience != applicationCommand {
 		return "unknown op"
 	}
-	if spec.requiresIdempotency && idempotencyKey == "" {
-		return "idempotencyKey required"
-	}
 	return ""
+}
+
+func requiresIdempotencyKey(op string) bool {
+	spec, found := classifyCommandOperation(op)
+	// Preserve the missing-key error for unknown application operations.
+	return !found || spec.audience != applicationCommand || spec.requiresIdempotency
 }

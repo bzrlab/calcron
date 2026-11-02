@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sync"
 
+	"github.com/bzrlab/calcron"
 	"github.com/coder/websocket"
 )
 
@@ -16,10 +18,12 @@ type hub struct {
 }
 
 type peer struct {
-	conn  *websocket.Conn
-	mu    sync.Mutex
-	app   string
-	admin bool
+	conn        *websocket.Conn
+	mu          sync.Mutex
+	app         string
+	admin       bool
+	maxInFlight int
+	inFlight    map[string]struct{}
 }
 
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
@@ -28,16 +32,29 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.CloseNow()
+	c.SetReadLimit((4 << 10) + 1)
 	p := &peer{conn: c}
 	ctx := r.Context()
-	_, body, err := c.Read(ctx)
+	body, err := s.readCommand(ctx, c, 4<<10)
 	if err != nil {
 		return
 	}
-	var auth frame
+	var auth struct {
+		ID          string          `json:"id"`
+		Op          string          `json:"op"`
+		Token       string          `json:"token"`
+		MaxInFlight json.RawMessage `json:"maxInFlight"`
+	}
 	if json.Unmarshal(body, &auth) != nil || auth.Op != "auth" {
 		return
 	}
+	var maxInFlight int
+	if len(auth.MaxInFlight) != 0 && json.Unmarshal(auth.MaxInFlight, &maxInFlight) != nil || maxInFlight < 0 {
+		_ = p.send(ctx, reply{ID: auth.ID, Error: "maxInFlight must be a non-negative integer"})
+		return
+	}
+	p.maxInFlight = maxInFlight
+	p.inFlight = map[string]struct{}{}
 	app, admin, err := s.commands.authenticate(ctx, auth.Token)
 	if err != nil {
 		code := "unavailable"
@@ -47,6 +64,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		_ = p.send(ctx, reply{ID: auth.ID, Error: code})
 		return
 	}
+	c.SetReadLimit(s.maxPayloadBytes + calcron.EnvelopeBytes + 1)
 	p.app, p.admin = app, admin
 	if !admin {
 		s.hub.add(p)
@@ -54,7 +72,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer s.hub.remove(p)
 	_ = p.send(ctx, reply{ID: auth.ID, OK: true, Data: map[string]any{"application": app, "admin": admin}})
 	for {
-		_, body, err = c.Read(ctx)
+		body, err = s.readCommand(ctx, c, s.maxPayloadBytes+calcron.EnvelopeBytes)
 		if err != nil {
 			return
 		}
@@ -121,4 +139,19 @@ func (h *hub) peer(app string) *peer {
 		return p
 	}
 	return nil
+}
+
+// Read one sentinel byte beyond the command budget so both transports report
+// the same error without allocating an unbounded WebSocket message.
+func (s *Server) readCommand(ctx context.Context, c *websocket.Conn, limit int64) ([]byte, error) {
+	_, reader, err := c.Reader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if int64(len(body)) > limit {
+		_ = c.Close(websocket.StatusMessageTooBig, "payload too large")
+		return nil, errors.New("payload too large")
+	}
+	return body, err
 }

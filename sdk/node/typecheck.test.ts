@@ -62,3 +62,12 @@ void calcron.set(daily);
 void calcron.setCallback("https://app.example/callback", "sekret", "callback:v1");
 // @ts-expect-error a clock cannot be combined with after.
 void calcron.set({ ...due, every: "5m" });
+
+void calcron.enqueue({ event: "invoice.due", data: { invoiceId: "42", amount: 100 } });
+void calcron.enqueue({ event: "invoice.due", data: { invoiceId: "42", amount: 100 }, idempotencyKey: "job:42" });
+// @ts-expect-error enqueue requires the event's payload.
+void calcron.enqueue({ event: "invoice.due" });
+// @ts-expect-error enqueue payload must match the event.
+void calcron.enqueue({ event: "invoice.paid", data: { amount: 100 } });
+// @ts-expect-error enqueue must use a declared event.
+void calcron.enqueue({ event: "unknown", data: {} });

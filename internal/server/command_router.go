@@ -38,11 +38,18 @@ func (r *commandRouter) authenticate(ctx context.Context, token string) (string,
 }
 
 func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
-	s := r.server
 	if p.admin {
 		if err := validateAdminOperation(f.Op); err != "" {
 			return fail(err)
 		}
+	} else if requiresIdempotencyKey(f.Op) && f.IdempotencyKey == "" {
+		return fail("idempotencyKey required")
+	}
+	s := r.server
+	if int64(len(f.Data)) > s.maxPayloadBytes || int64(len(f.Chain)) > s.maxPayloadBytes {
+		return fail("payload too large")
+	}
+	if p.admin {
 		switch commandOperation(f.Op) {
 		case operationAppCreate:
 			return s.applications.Create(ctx, f)
@@ -70,8 +77,8 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 			return s.cancelDelivery(ctx, f)
 		}
 	}
-	if f.IdempotencyKey == "" {
-		return fail("idempotencyKey required")
+	if !requiresIdempotencyKey(f.Op) && f.IdempotencyKey == "" {
+		return s.schedules.Enqueue(ctx, p.app, f)
 	}
 	return s.serial(ctx, p.app, f.IdempotencyKey, func() reply {
 		// Keep validation inside serialization. A retried idempotency key must
@@ -80,6 +87,8 @@ func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
 			return fail(err)
 		}
 		switch commandOperation(f.Op) {
+		case operationEnqueue:
+			return s.schedules.Enqueue(ctx, p.app, f)
 		case operationCallbackSet:
 			return s.applications.SetCallback(ctx, p.app, f)
 		case operationScheduleSet:

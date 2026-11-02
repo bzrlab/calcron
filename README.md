@@ -13,7 +13,11 @@ Compose serves Calcron through Traefik on the external `proxy` network. Open the
 
 Use the Node/TypeScript or Go client through the [SDK guide](docs/sdk.md). It
 explains the command surface, delivery semantics, idempotency, and complete
-examples.
+examples. [Enqueue](docs/enqueue.md) accepts immediate work with an optional idempotency key.
+
+See [payload limits](docs/payload-limits.md) for configuration and transport errors.
+See [retention configuration and replay expiry](docs/retention.md) for automatic
+cleanup of finished work.
 
 ## Admin dashboard
 
@@ -30,7 +34,7 @@ cd .. && go build ./cmd/calcron
 
 Admin first sends `{"op":"auth","token":"..."}`, then `app.create`. It returns a one-time `cc_<id>_<secret>` application token.
 
-Application commands: `schedule.set`, `schedule.cancel`, `schedule.extend`, `schedule.throttle`, `delivery.ack`, `workflow.start`, `signal`, `callback.set`.
+Application commands: `enqueue`, `schedule.set`, `schedule.cancel`, `schedule.extend`, `schedule.throttle`, `delivery.ack`, `workflow.start`, `signal`, `callback.set`.
 
 Admin commands: `workflow.publish`, `calendar.set`, `calendar.next`, `calendar.occurrences`, `start-schedule.set`, `dashboard.stats`, `dashboard.list`, `delivery.replay`, `delivery.cancel`, `app.token.rotate`, `app.token.revoke`.
 

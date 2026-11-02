@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bzrlab/calcron"
 	"github.com/coder/websocket"
 )
 
@@ -20,6 +21,7 @@ type Client struct {
 	pending              map[string]chan response
 	handlers             map[string]func(Event)
 	url, token           string
+	options              ConnectOptions
 	closed, reconnecting atomic.Bool
 }
 type response struct {
@@ -105,6 +107,20 @@ func SetTyped[T any](ctx context.Context, c *Client, s TypedSchedule[T]) (Schedu
 	return c.Set(ctx, Schedule{Key: s.Key, Event: s.Event.name, After: s.After, At: s.At, Every: s.Every, Daily: s.Daily, Timezone: s.Timezone, Data: s.Data, Chain: chain, IdempotencyKey: s.IdempotencyKey})
 }
 
+// TypedEnqueue pairs an immediate delivery with its event's payload type.
+type TypedEnqueue[T any] struct {
+	Event EventType[T]
+	Data  T
+	// IdempotencyKey must be reused for retries of the same business intent.
+	// Empty means a new job on every call; retrying after a timeout can duplicate it.
+	IdempotencyKey string
+}
+
+// EnqueueTyped enqueues a payload tied to its event without a deadline or schedule key.
+func EnqueueTyped[T any](ctx context.Context, c *Client, job TypedEnqueue[T]) (ScheduleResult, error) {
+	return c.Enqueue(ctx, Enqueue{Event: job.Event.name, Data: job.Data, IdempotencyKey: job.IdempotencyKey})
+}
+
 // TypedThrottle pairs a throttled event with the matching payload type.
 type TypedThrottle[T any] struct {
 	Key, Cooldown, IdempotencyKey string
@@ -167,6 +183,15 @@ type Schedule struct {
 	Chain                                                         *Chain
 }
 
+// Enqueue describes an immediate delivery. IdempotencyKey is optional; supply it for safe retries.
+type Enqueue struct {
+	Event string
+	Data  any
+	// IdempotencyKey must be reused for retries of the same business intent.
+	// Empty means a new job on every call; retrying after a timeout can duplicate it.
+	IdempotencyKey string
+}
+
 // Chain creates a successor schedule after its parent delivery is acknowledged.
 type Chain struct {
 	Key   string `json:"key"`
@@ -182,21 +207,52 @@ type Throttle struct {
 	Chain                                *Chain
 }
 
-func Connect(ctx context.Context, url, token string) (*Client, error) {
+// ConnectOptions controls this connection, including automatic reconnects.
+type ConnectOptions struct {
+	// MaxInFlight limits distinct unacknowledged deliveries. Zero means unlimited.
+	MaxInFlight int
+	// MaxPayloadBytes is the largest expected JSON delivery payload in bytes.
+	// Zero selects 64 KiB. The receive limit adds 64 KiB for the wire envelope.
+	// Match an increased server MaxPayloadBytes, including stored older payloads.
+	MaxPayloadBytes int64
+}
+
+func Connect(ctx context.Context, url, token string, options ...ConnectOptions) (*Client, error) {
+	var opts ConnectOptions
+	if len(options) > 1 {
+		return nil, errors.New("at most one ConnectOptions value allowed")
+	}
+	if len(options) == 1 {
+		opts = options[0]
+	}
+	if opts.MaxInFlight < 0 {
+		return nil, errors.New("maxInFlight must be a non-negative integer")
+	}
+	if opts.MaxPayloadBytes == 0 {
+		opts.MaxPayloadBytes = 64 << 10
+	}
+	if opts.MaxPayloadBytes < 0 || opts.MaxPayloadBytes > (1<<63-1)-calcron.EnvelopeBytes-1 {
+		return nil, errors.New("MaxPayloadBytes must be positive and leave room for 65536 envelope bytes")
+	}
 	c, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err = authenticate(ctx, c, token); err != nil {
+	if err = authenticate(ctx, c, token, opts); err != nil {
 		c.CloseNow()
 		return nil, err
 	}
-	x := &Client{conn: c, url: url, token: token, pending: map[string]chan response{}, handlers: map[string]func(Event){}}
+	x := &Client{conn: c, url: url, token: token, options: opts, pending: map[string]chan response{}, handlers: map[string]func(Event){}}
 	go x.read(context.Background(), c)
 	return x, nil
 }
-func authenticate(ctx context.Context, c *websocket.Conn, token string) error {
-	b, _ := json.Marshal(map[string]string{"op": "auth", "token": token})
+func authenticate(ctx context.Context, c *websocket.Conn, token string, options ConnectOptions) error {
+	c.SetReadLimit(options.MaxPayloadBytes + calcron.EnvelopeBytes)
+	b, _ := json.Marshal(struct {
+		Op          string `json:"op"`
+		Token       string `json:"token"`
+		MaxInFlight int    `json:"maxInFlight,omitempty"`
+	}{"auth", token, options.MaxInFlight})
 	if err := c.Write(ctx, websocket.MessageText, b); err != nil {
 		return err
 	}
@@ -239,6 +295,12 @@ func (c *Client) Set(ctx context.Context, s Schedule) (ScheduleResult, error) {
 	}
 	return requestAs[ScheduleResult](c, ctx, map[string]any{"op": "schedule.set", "key": s.Key, "event": s.Event, "after": s.After, "at": s.At, "every": s.Every, "daily": s.Daily, "timezone": s.Timezone, "data": s.Data, "chain": s.Chain, "idempotencyKey": s.IdempotencyKey})
 }
+
+// Enqueue creates an immediate delivery using the ordinary lease, retry, and acknowledgement rules.
+func (c *Client) Enqueue(ctx context.Context, job Enqueue) (ScheduleResult, error) {
+	return requestAs[ScheduleResult](c, ctx, map[string]any{"op": "enqueue", "event": job.Event, "data": job.Data, "idempotencyKey": job.IdempotencyKey})
+}
+
 func (c *Client) SetCallback(ctx context.Context, callbackURL, secret, idempotencyKey string) (CallbackResult, error) {
 	return requestAs[CallbackResult](c, ctx, map[string]any{"op": "callback.set", "url": callbackURL, "secret": secret, "idempotencyKey": idempotencyKey})
 }
@@ -338,7 +400,7 @@ func (c *Client) reconnect() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		conn, _, err := websocket.Dial(ctx, c.url, nil)
 		if err == nil {
-			err = authenticate(ctx, conn, c.token)
+			err = authenticate(ctx, conn, c.token, c.options)
 			cancel()
 			if err == nil {
 				c.connMu.Lock()

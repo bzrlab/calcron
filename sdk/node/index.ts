@@ -26,6 +26,8 @@ export type Schedule<Events extends object = EventMap, Name extends EventName<Ev
 export type Chain<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = { key: string; event: Name; after: string } & PayloadField<Events[Name]>;
 /** A leading-edge immediate delivery, limited to one trigger per cooldown window. */
 export type Throttle<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = ScheduleBase<Events, Name> & { cooldown: string };
+/** An immediate delivery with an optional key for retrying the command. */
+export type Enqueue<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = { event: Name; idempotencyKey?: string } & PayloadField<Events[Name]>;
 export type ScheduleResult = { scheduleId: string; runAt: string };
 export type CancelResult = { cancelled: boolean };
 export type ThrottleResult = { triggered: boolean };
@@ -36,6 +38,9 @@ export type CallbackResult = { url: string };
 export type Delivery<Events extends object = EventMap, Name extends EventName<Events> = EventName<Events>> = { id: string; data: Events[Name]; ack: () => Promise<AckResult> };
 const REQUEST_TIMEOUT_MS = 10_000;
 type Reply = { id?: string; ok?: boolean; error?: string; op?: string; deliveryId?: string; event?: string; data?: unknown };
+
+/** Connection settings retained across automatic reconnects. Zero or omitted means unlimited. */
+export type ConnectOptions = { maxInFlight?: number };
 
 export class Calcron<Events extends object = EventMap, Workflows extends object = WorkflowMap> {
   private ws!: WebSocket;
@@ -48,7 +53,11 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private url: string;
   private token: string;
-  constructor(url: string, token: string) { this.url = url; this.token = token; }
+  private maxInFlight?: number;
+  constructor(url: string, token: string, options: ConnectOptions = {}) {
+    if (options.maxInFlight !== undefined && (!Number.isSafeInteger(options.maxInFlight) || options.maxInFlight < 0)) throw new Error("maxInFlight must be a non-negative safe integer");
+    this.url = url; this.token = token; this.maxInFlight = options.maxInFlight;
+  }
   async connect() { this.stopped = false; await this.open(); }
   close() {
     this.stopped = true;
@@ -61,6 +70,7 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
   }
   on<Name extends EventName<Events>>(event: Name, handler: (event: Delivery<Events, Name>) => void | Promise<void>) { this.handlers.set(event, handler as (event: Delivery<Events, EventName<Events>>) => void | Promise<void>); }
   set<Name extends EventName<Events>>(schedule: Schedule<Events, Name>) { return this.request<ScheduleResult>({ op: "schedule.set", ...schedule }); }
+  enqueue<Name extends EventName<Events>>(job: Enqueue<Events, Name>) { return this.request<ScheduleResult>({ op: "enqueue", ...job }); }
   throttle<Name extends EventName<Events>>(throttle: Throttle<Events, Name>) { return this.request<ThrottleResult>({ op: "schedule.throttle", ...throttle }); }
   cancel(key: string, idempotencyKey: string) { return this.request<CancelResult>({ op: "schedule.cancel", key, idempotencyKey }); }
   extend(key: string, by: string, idempotencyKey: string) { return this.request<Pick<ScheduleResult, "runAt">>({ op: "schedule.extend", key, by, idempotencyKey }); }
@@ -77,7 +87,7 @@ export class Calcron<Events extends object = EventMap, Workflows extends object 
     this.ws.onmessage = e => { try { this.receive(JSON.parse(e.data)); } catch { this.drop(); } };
     this.ws.onclose = () => this.lost();
     try {
-      await this.request({ op: "auth", token: this.token });
+      await this.request({ op: "auth", token: this.token, ...(this.maxInFlight === undefined ? {} : { maxInFlight: this.maxInFlight }) });
     } catch (error) {
       if (!reconnecting || (error as Error).message === "unauthorized") {
         this.stopped = true;

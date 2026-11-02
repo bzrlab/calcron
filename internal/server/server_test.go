@@ -567,7 +567,7 @@ func TestMissedOccurrencePolicies(t *testing.T) {
 	}
 }
 
-func testServer(t *testing.T, retryBase time.Duration) (context.Context, *httptest.Server, *websocket.Conn) {
+func testServer(t *testing.T, retryBase time.Duration, configure ...func(*server.Config)) (context.Context, *httptest.Server, *websocket.Conn) {
 	t.Helper()
 	db := os.Getenv("CALCRON_TEST_DATABASE_URL")
 	if db == "" {
@@ -575,7 +575,11 @@ func testServer(t *testing.T, retryBase time.Duration) (context.Context, *httpte
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	s, err := server.New(ctx, server.Config{DatabaseURL: db, AdminToken: "test-admin", Migration: calcron.InitialMigration, RetryBase: retryBase})
+	config := server.Config{DatabaseURL: db, AdminToken: "test-admin", Migration: calcron.InitialMigration, RetryBase: retryBase}
+	for _, change := range configure {
+		change(&config)
+	}
+	s, err := server.New(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -706,6 +710,8 @@ func dialUnauthorized(t *testing.T, ctx context.Context, rawURL, token string) {
 		t.Fatal(err)
 	}
 	defer c.CloseNow()
+	// Dashboard replies may contain several maximum-size stored payloads.
+	c.SetReadLimit(16 << 20)
 	write(t, ctx, c, map[string]string{"op": "auth", "token": token})
 	if got := read(t, ctx, c); got["error"] != "unauthorized" {
 		t.Fatal("revoked token authenticated")
@@ -731,6 +737,8 @@ func dial(t *testing.T, ctx context.Context, rawURL, token string) *websocket.Co
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Dashboard replies may contain several maximum-size stored payloads.
+	c.SetReadLimit(16 << 20)
 	write(t, ctx, c, map[string]string{"op": "auth", "token": token})
 	if got := read(t, ctx, c); got["ok"] != true {
 		t.Fatal("authentication failed")

@@ -223,6 +223,16 @@ func ParseChain(raw json.RawMessage) (Chain, error) {
 	return next, nil
 }
 
+// Enqueue creates an immediate, independently named schedule using ordinary delivery rules.
+func (m *Module) Enqueue(ctx context.Context, app string, f protocol.Frame) protocol.Reply {
+	if f.Event == "" {
+		return fail("event required")
+	}
+	return m.Set(ctx, app, protocol.Frame{
+		Key: m.newID(), Event: f.Event, Data: f.Data, After: "0s", IdempotencyKey: f.IdempotencyKey,
+	})
+}
+
 func (m *Module) Set(ctx context.Context, app string, f protocol.Frame) protocol.Reply {
 	if f.Key == "" || f.Event == "" {
 		return fail("key and event required")
