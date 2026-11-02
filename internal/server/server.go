@@ -14,6 +14,7 @@ import (
 	"github.com/bzrlab/calcron/internal/application"
 	"github.com/bzrlab/calcron/internal/calendar"
 	"github.com/bzrlab/calcron/internal/delivery"
+	"github.com/bzrlab/calcron/internal/retention"
 	"github.com/bzrlab/calcron/internal/schedule"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,6 +23,7 @@ import (
 type Config struct {
 	DatabaseURL, AdminToken, Migration string
 	RetryBase                          time.Duration
+	RetentionPeriod                    time.Duration
 }
 
 // Server coordinates command handling, asynchronous delivery, and workflows.
@@ -43,11 +45,19 @@ type Server struct {
 	cancel         context.CancelFunc
 	done           chan struct{}
 	closeOnce      sync.Once
+
+	retentionPeriod time.Duration
 }
 
 func New(ctx context.Context, c Config) (*Server, error) {
 	if c.DatabaseURL == "" || c.AdminToken == "" {
 		return nil, errors.New("DATABASE_URL and CALCRON_ADMIN_TOKEN required")
+	}
+	if c.RetentionPeriod < 0 {
+		return nil, errors.New("retention period must be positive")
+	}
+	if c.RetentionPeriod == 0 {
+		c.RetentionPeriod = retention.DefaultPeriod
 	}
 	db, err := pgxpool.New(ctx, c.DatabaseURL)
 	if err != nil {
@@ -57,7 +67,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase}
+	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase, retentionPeriod: c.RetentionPeriod}
 	s.commands = newCommandRouter(s)
 	s.dashboardReads = newDashboardRead(db, s.hub)
 	s.workflows = newWorkflowEngine(s)
@@ -116,6 +126,7 @@ func (s *Server) loop(ctx context.Context) {
 			s.workflows.wake(ctx)
 			s.schedules.StartRecurring(ctx)
 			s.cleanupExpiredThrottles(ctx)
+			s.cleanupRetention(ctx)
 		}
 	}
 }
@@ -130,4 +141,17 @@ func random() string {
 
 func (s *Server) cleanupExpiredThrottles(ctx context.Context) {
 	_, _ = s.db.Exec(ctx, `delete from throttles where until_at <= now()`)
+}
+
+func (s *Server) cleanupRetention(ctx context.Context) {
+	counts, err := retention.Cleanup(ctx, s.db, time.Now().Add(-s.retentionPeriod), retention.BatchSize)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("retention cleanup: %v", err)
+		}
+		return
+	}
+	if counts != (retention.Counts{}) {
+		log.Printf("retention cleanup: deliveries=%d schedules=%d history=%d idempotency=%d", counts.Deliveries, counts.Schedules, counts.History, counts.Idempotency)
+	}
 }

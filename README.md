@@ -15,6 +15,9 @@ Use the Node/TypeScript or Go client through the [SDK guide](docs/sdk.md). It
 explains the command surface, delivery semantics, idempotency, and complete
 examples. [Enqueue](docs/enqueue.md) accepts immediate work with an optional idempotency key.
 
+See [retention configuration and replay expiry](docs/retention.md) for automatic
+cleanup of finished work.
+
 ## Admin dashboard
 
 React + TypeScript + Tailwind/DaisyUI, built with Vite and embedded in the Go binary.

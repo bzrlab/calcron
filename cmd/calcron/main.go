@@ -13,10 +13,11 @@ import (
 func main() {
 	ctx := context.Background()
 	s, err := server.New(ctx, server.Config{
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		AdminToken:  os.Getenv("CALCRON_ADMIN_TOKEN"),
-		Migration:   calcron.InitialMigration,
-		RetryBase:   duration("CALCRON_RETRY_BASE", time.Second),
+		DatabaseURL:     os.Getenv("DATABASE_URL"),
+		AdminToken:      os.Getenv("CALCRON_ADMIN_TOKEN"),
+		Migration:       calcron.InitialMigration,
+		RetryBase:       duration("CALCRON_RETRY_BASE", time.Second),
+		RetentionPeriod: duration("CALCRON_RETENTION", 30*24*time.Hour),
 	})
 	if err != nil {
 		log.Fatal(err)
