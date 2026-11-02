@@ -303,3 +303,20 @@ test("enqueue sends a payload with an optional idempotency key", async () => {
   assert.equal(socket.sent.at(-1)?.idempotencyKey, undefined);
   client.close();
 });
+
+test("declares the connection cap again after reconnecting", async () => {
+ installFakeWebSocket();
+ const client = new Calcron("ws://calcron.test/ws", "test", { maxInFlight: 2 });
+ await client.connect();
+ assert.equal(FakeWebSocket.connections[0]!.sent[0]!.maxInFlight, 2);
+ FakeWebSocket.connections[0]!.close();
+ await new Promise(resolve => setTimeout(resolve, 350));
+ assert.equal(FakeWebSocket.connections[1]!.sent[0]!.maxInFlight, 2);
+ client.close();
+});
+
+test("rejects invalid connection caps before connecting", () => {
+ for (const maxInFlight of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+  assert.throws(() => new Calcron("ws://calcron.test/ws", "test", { maxInFlight }), /maxInFlight/);
+ }
+});

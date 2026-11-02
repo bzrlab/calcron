@@ -20,6 +20,7 @@ type Client struct {
 	pending              map[string]chan response
 	handlers             map[string]func(Event)
 	url, token           string
+	options              ConnectOptions
 	closed, reconnecting atomic.Bool
 }
 type response struct {
@@ -201,21 +202,41 @@ type Throttle struct {
 	Chain                                *Chain
 }
 
-func Connect(ctx context.Context, url, token string) (*Client, error) {
+// ConnectOptions controls this connection, including automatic reconnects.
+type ConnectOptions struct {
+	// MaxInFlight limits distinct unacknowledged deliveries. Zero means unlimited.
+	MaxInFlight int
+}
+
+func Connect(ctx context.Context, url, token string, options ...ConnectOptions) (*Client, error) {
+	var opts ConnectOptions
+	if len(options) > 1 {
+		return nil, errors.New("at most one ConnectOptions value allowed")
+	}
+	if len(options) == 1 {
+		opts = options[0]
+	}
+	if opts.MaxInFlight < 0 {
+		return nil, errors.New("maxInFlight must be a non-negative integer")
+	}
 	c, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err = authenticate(ctx, c, token); err != nil {
+	if err = authenticate(ctx, c, token, opts); err != nil {
 		c.CloseNow()
 		return nil, err
 	}
-	x := &Client{conn: c, url: url, token: token, pending: map[string]chan response{}, handlers: map[string]func(Event){}}
+	x := &Client{conn: c, url: url, token: token, options: opts, pending: map[string]chan response{}, handlers: map[string]func(Event){}}
 	go x.read(context.Background(), c)
 	return x, nil
 }
-func authenticate(ctx context.Context, c *websocket.Conn, token string) error {
-	b, _ := json.Marshal(map[string]string{"op": "auth", "token": token})
+func authenticate(ctx context.Context, c *websocket.Conn, token string, options ConnectOptions) error {
+	b, _ := json.Marshal(struct {
+		Op          string `json:"op"`
+		Token       string `json:"token"`
+		MaxInFlight int    `json:"maxInFlight,omitempty"`
+	}{"auth", token, options.MaxInFlight})
 	if err := c.Write(ctx, websocket.MessageText, b); err != nil {
 		return err
 	}
@@ -363,7 +384,7 @@ func (c *Client) reconnect() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		conn, _, err := websocket.Dial(ctx, c.url, nil)
 		if err == nil {
-			err = authenticate(ctx, conn, c.token)
+			err = authenticate(ctx, conn, c.token, c.options)
 			cancel()
 			if err == nil {
 				c.connMu.Lock()

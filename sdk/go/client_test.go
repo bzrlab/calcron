@@ -34,8 +34,13 @@ func TestClientReconnects(t *testing.T) {
 			return
 		}
 		defer c.CloseNow()
-		_, _, err = c.Read(r.Context())
+		_, auth, err := c.Read(r.Context())
 		if err != nil {
+			return
+		}
+		var declaration map[string]any
+		if json.Unmarshal(auth, &declaration) != nil || declaration["maxInFlight"] != float64(2) {
+			t.Error("connection cap missing on authentication")
 			return
 		}
 		b, _ := json.Marshal(map[string]any{"ok": true})
@@ -56,7 +61,7 @@ func TestClientReconnects(t *testing.T) {
 	defer h.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	c, err := Connect(ctx, "ws://"+l.Addr().String(), "token")
+	c, err := Connect(ctx, "ws://"+l.Addr().String(), "token", ConnectOptions{MaxInFlight: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,5 +264,14 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("ack not sent")
+	}
+}
+
+func TestConnectRejectsInvalidOptionsBeforeDialing(t *testing.T) {
+	for _, options := range [][]ConnectOptions{{{MaxInFlight: -1}}, {{}, {}}} {
+		c, err := Connect(context.Background(), "invalid-url", "token", options...)
+		if c != nil || err == nil {
+			t.Fatalf("invalid options accepted: %#v %v", c, err)
+		}
 	}
 }
