@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/bzrlab/calcron"
@@ -16,6 +17,7 @@ func main() {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		AdminToken:      os.Getenv("CALCRON_ADMIN_TOKEN"),
 		Migration:       calcron.InitialMigration,
+		MaxPayloadBytes: payloadLimit(),
 		RetryBase:       duration("CALCRON_RETRY_BASE", time.Second),
 		RetentionPeriod: duration("CALCRON_RETENTION", 30*24*time.Hour),
 	})
@@ -42,4 +44,16 @@ func env(k, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func payloadLimit() int64 {
+	value := os.Getenv("CALCRON_MAX_PAYLOAD_BYTES")
+	if value == "" {
+		return 0
+	}
+	limit, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || limit <= 0 {
+		log.Fatal("CALCRON_MAX_PAYLOAD_BYTES must be a positive integer")
+	}
+	return limit
 }

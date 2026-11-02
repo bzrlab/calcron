@@ -38,11 +38,18 @@ func (r *commandRouter) authenticate(ctx context.Context, token string) (string,
 }
 
 func (r *commandRouter) handle(ctx context.Context, p *peer, f frame) reply {
-	s := r.server
 	if p.admin {
 		if err := validateAdminOperation(f.Op); err != "" {
 			return fail(err)
 		}
+	} else if f.Op != string(operationEnqueue) && f.IdempotencyKey == "" {
+		return fail("idempotencyKey required")
+	}
+	s := r.server
+	if int64(len(f.Data)) > s.maxPayloadBytes || int64(len(f.Chain)) > s.maxPayloadBytes {
+		return fail("payload too large")
+	}
+	if p.admin {
 		switch commandOperation(f.Op) {
 		case operationAppCreate:
 			return s.applications.Create(ctx, f)

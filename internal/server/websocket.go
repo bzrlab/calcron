@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sync"
 
@@ -30,9 +31,10 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.CloseNow()
+	c.SetReadLimit(s.maxPayloadBytes + (64 << 10) + 1)
 	p := &peer{conn: c}
 	ctx := r.Context()
-	_, body, err := c.Read(ctx)
+	body, err := s.readCommand(ctx, c)
 	if err != nil {
 		return
 	}
@@ -62,7 +64,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer s.hub.remove(p)
 	_ = p.send(ctx, reply{ID: auth.ID, OK: true, Data: map[string]any{"application": app, "admin": admin}})
 	for {
-		_, body, err = c.Read(ctx)
+		body, err = s.readCommand(ctx, c)
 		if err != nil {
 			return
 		}
@@ -129,4 +131,20 @@ func (h *hub) peer(app string) *peer {
 		return p
 	}
 	return nil
+}
+
+// Read one sentinel byte beyond the command budget so both transports report
+// the same error without allocating an unbounded WebSocket message.
+func (s *Server) readCommand(ctx context.Context, c *websocket.Conn) ([]byte, error) {
+	_, reader, err := c.Reader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	limit := s.maxPayloadBytes + (64 << 10)
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if int64(len(body)) > limit {
+		_ = c.Close(websocket.StatusMessageTooBig, "payload too large")
+		return nil, errors.New("payload too large")
+	}
+	return body, err
 }

@@ -24,6 +24,7 @@ type Config struct {
 	DatabaseURL, AdminToken, Migration string
 	RetryBase                          time.Duration
 	RetentionPeriod                    time.Duration
+	MaxPayloadBytes                    int64
 }
 
 // Server coordinates command handling, asynchronous delivery, and workflows.
@@ -47,6 +48,7 @@ type Server struct {
 	closeOnce      sync.Once
 
 	retentionPeriod time.Duration
+	maxPayloadBytes int64
 }
 
 func New(ctx context.Context, c Config) (*Server, error) {
@@ -59,6 +61,12 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	if c.RetentionPeriod == 0 {
 		c.RetentionPeriod = retention.DefaultPeriod
 	}
+	if c.MaxPayloadBytes == 0 {
+		c.MaxPayloadBytes = 64 << 10
+	}
+	if c.MaxPayloadBytes < 0 || c.MaxPayloadBytes > (1<<63-1)-(64<<10)-1 {
+		return nil, errors.New("MaxPayloadBytes must be positive and leave room for 65536 envelope bytes")
+	}
 	db, err := pgxpool.New(ctx, c.DatabaseURL)
 	if err != nil {
 		return nil, err
@@ -67,7 +75,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase, retentionPeriod: c.RetentionPeriod}
+	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase, retentionPeriod: c.RetentionPeriod, maxPayloadBytes: c.MaxPayloadBytes}
 	s.commands = newCommandRouter(s)
 	s.dashboardReads = newDashboardRead(db, s.hub)
 	s.workflows = newWorkflowEngine(s)
