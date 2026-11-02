@@ -10,6 +10,9 @@ Install the Node package with `npm install @bzrlab/calcron`. Go applications imp
 
 The SDK authenticates during `connect` / `Connect`. A failed authentication returns an error; reconnect attempts use exponential backoff up to ten seconds. Node stops reconnecting only when Calcron answers `unauthorized`; a lost connection or an `unavailable` answer during re-authentication is retried. `close` / `Close` stops reconnecting. A request in flight when a connection is lost fails, so retry it with the **same idempotency key**.
 
+Idempotency responses expire after the configured [retention window](retention.md)
+(30 days by default). Retrying a key after expiry may execute the command again.
+
 ## Application operations
 
 Every state-changing operation except `enqueue` requires an application-supplied idempotency key. For `enqueue`, supply one when the caller may retry; omitting it creates an independent immediate schedule on every call. See [the enqueue command](enqueue.md). Durations use Go duration syntax such as `30s`, `5m`, or `24h`. An absolute deadline uses an RFC 3339 UTC timestamp such as `2026-09-28T10:00:00Z`.
