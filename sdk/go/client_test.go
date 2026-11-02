@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -268,10 +270,98 @@ func TestClientCommandsAndDelivery(t *testing.T) {
 }
 
 func TestConnectRejectsInvalidOptionsBeforeDialing(t *testing.T) {
-	for _, options := range [][]ConnectOptions{{{MaxInFlight: -1}}, {{}, {}}} {
+	for _, options := range [][]ConnectOptions{{{MaxInFlight: -1}}, {{MaxPayloadBytes: -1}}, {{MaxPayloadBytes: 1<<63 - 1}}, {{}, {}}} {
 		c, err := Connect(context.Background(), "invalid-url", "token", options...)
 		if c != nil || err == nil {
 			t.Fatalf("invalid options accepted: %#v %v", c, err)
 		}
+	}
+}
+
+// Exercise delivery and acknowledgement on both the original and replacement socket.
+func TestClientReceivesLargeDeliveryAfterReconnect(t *testing.T) {
+	for _, size := range []int{40 << 10, 64 << 10, 256 << 10} {
+		t.Run(itoa(uint64(size)), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			ready := make(chan struct{})
+			payload := json.RawMessage(`"` + strings.Repeat("x", size-2) + `"`)
+			var connections atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer conn.CloseNow()
+				if _, _, err = conn.Read(ctx); err != nil {
+					return
+				}
+				if err = conn.Write(ctx, websocket.MessageText, []byte(`{"ok":true}`)); err != nil {
+					return
+				}
+				n := connections.Add(1)
+				select {
+				case <-ready:
+				case <-ctx.Done():
+					return
+				}
+				frame, _ := json.Marshal(map[string]any{"op": "delivery", "deliveryId": itoa(uint64(n)), "event": "large", "data": payload})
+				if err = conn.Write(ctx, websocket.MessageText, frame); err != nil {
+					return
+				}
+				_, raw, err := conn.Read(ctx)
+				if err != nil {
+					return
+				}
+				var ack map[string]any
+				if json.Unmarshal(raw, &ack) != nil || ack["op"] != "delivery.ack" || ack["deliveryId"] != itoa(uint64(n)) {
+					t.Error("missing delivery acknowledgement")
+					return
+				}
+				reply, _ := json.Marshal(map[string]any{"id": ack["id"], "ok": true, "data": map[string]bool{"acked": true}})
+				if err = conn.Write(ctx, websocket.MessageText, reply); err != nil {
+					return
+				}
+				if n == 1 {
+					_ = conn.Close(websocket.StatusGoingAway, "reconnect test")
+				} else {
+					_, _, _ = conn.Read(ctx)
+				}
+			}))
+			defer server.Close()
+			var options ConnectOptions
+			if size > 64<<10 {
+				options.MaxPayloadBytes = int64(size)
+			}
+			client, err := Connect(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), "token", options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			delivered := make(chan Event, 4)
+			client.On("large", func(e Event) { delivered <- e })
+			close(ready)
+			for n := 1; n <= 2; n++ {
+				select {
+				case e := <-delivered:
+					if e.ID != itoa(uint64(n)) || string(e.Data) != string(payload) {
+						t.Fatal("delivery ID or payload changed")
+					}
+					if result, err := e.Ack(ctx); err != nil || !result.Acked {
+						t.Fatalf("ack = %#v, %v", result, err)
+					}
+				case <-ctx.Done():
+					t.Fatalf("delivery %d not received: %v", n, ctx.Err())
+				}
+			}
+		})
+	}
+}
+
+func TestConnectRejectsOverflowingReceiveLimit(t *testing.T) {
+	// coder/websocket reserves one additional byte beyond the configured limit.
+	_, err := Connect(context.Background(), "invalid-url", "token", ConnectOptions{MaxPayloadBytes: (1<<63 - 1) - (64 << 10)})
+	if err == nil || err.Error() != "MaxPayloadBytes must be positive and leave room for 65536 envelope bytes" {
+		t.Fatalf("expected receive-limit validation before dialing, got %v", err)
 	}
 }

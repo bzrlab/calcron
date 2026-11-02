@@ -206,6 +206,10 @@ type Throttle struct {
 type ConnectOptions struct {
 	// MaxInFlight limits distinct unacknowledged deliveries. Zero means unlimited.
 	MaxInFlight int
+	// MaxPayloadBytes is the largest expected JSON delivery payload in bytes.
+	// Zero selects 64 KiB. The receive limit adds 64 KiB for the wire envelope.
+	// Match an increased server MaxPayloadBytes, including stored older payloads.
+	MaxPayloadBytes int64
 }
 
 func Connect(ctx context.Context, url, token string, options ...ConnectOptions) (*Client, error) {
@@ -218,6 +222,12 @@ func Connect(ctx context.Context, url, token string, options ...ConnectOptions) 
 	}
 	if opts.MaxInFlight < 0 {
 		return nil, errors.New("maxInFlight must be a non-negative integer")
+	}
+	if opts.MaxPayloadBytes == 0 {
+		opts.MaxPayloadBytes = 64 << 10
+	}
+	if opts.MaxPayloadBytes < 0 || opts.MaxPayloadBytes > (1<<63-1)-(64<<10)-1 {
+		return nil, errors.New("MaxPayloadBytes must be positive and leave room for 65536 envelope bytes")
 	}
 	c, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
@@ -232,6 +242,7 @@ func Connect(ctx context.Context, url, token string, options ...ConnectOptions) 
 	return x, nil
 }
 func authenticate(ctx context.Context, c *websocket.Conn, token string, options ConnectOptions) error {
+	c.SetReadLimit(options.MaxPayloadBytes + (64 << 10))
 	b, _ := json.Marshal(struct {
 		Op          string `json:"op"`
 		Token       string `json:"token"`
