@@ -179,7 +179,7 @@ func TestCleanupSkipsLockedRowsAndEventuallyRemovesReferences(t *testing.T) {
 
 func TestTickExpiresReplayCacheAndFinishedScheduleThroughCommands(t *testing.T) {
 	ctx, db := database(t)
-	s, err := server.New(ctx, server.Config{DatabaseURL: db.Config().ConnString(), AdminToken: "admin", Migration: calcron.InitialMigration, RetentionPeriod: time.Hour})
+	s, err := server.New(ctx, server.Config{DatabaseURL: db.Config().ConnString(), AdminToken: "admin", Migration: calcron.InitialMigration, RetentionPeriod: time.Hour, RetentionInterval: 20 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
