@@ -25,7 +25,9 @@ type Config struct {
 	DatabaseURL, AdminToken, Migration string
 	RetryBase                          time.Duration
 	RetentionPeriod                    time.Duration
-	MaxPayloadBytes                    int64
+	// RetentionInterval is how often expired work is swept; zero means one minute.
+	RetentionInterval time.Duration
+	MaxPayloadBytes   int64
 }
 
 // Server coordinates command handling, asynchronous delivery, and workflows.
@@ -51,6 +53,7 @@ type Server struct {
 	nextRetention     time.Time
 	retentionFailures uint64
 	retentionPeriod   time.Duration
+	retentionInterval time.Duration
 	maxPayloadBytes   int64
 }
 
@@ -63,6 +66,12 @@ func New(ctx context.Context, c Config) (*Server, error) {
 	}
 	if c.RetentionPeriod == 0 {
 		c.RetentionPeriod = retention.DefaultPeriod
+	}
+	if c.RetentionInterval < 0 {
+		return nil, errors.New("retention interval must not be negative")
+	}
+	if c.RetentionInterval == 0 {
+		c.RetentionInterval = time.Minute
 	}
 	if c.MaxPayloadBytes == 0 {
 		c.MaxPayloadBytes = 64 << 10
@@ -78,7 +87,7 @@ func New(ctx context.Context, c Config) (*Server, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase, retentionPeriod: c.RetentionPeriod, maxPayloadBytes: c.MaxPayloadBytes}
+	s := &Server{db: db, admin: c.AdminToken, hub: &hub{apps: map[string]map[*peer]struct{}{}}, id: random(), retryBase: c.RetryBase, retentionPeriod: c.RetentionPeriod, retentionInterval: c.RetentionInterval, maxPayloadBytes: c.MaxPayloadBytes}
 	s.commands = newCommandRouter(s)
 	s.dashboardReads = newDashboardRead(db, s.hub)
 	s.workflows = newWorkflowEngine(s)
@@ -158,7 +167,7 @@ func (s *Server) cleanupRetention(ctx context.Context) {
 	if time.Now().Before(s.nextRetention) {
 		return
 	}
-	s.nextRetention = time.Now().Add(time.Minute)
+	s.nextRetention = time.Now().Add(s.retentionInterval)
 	counts, err := retention.Cleanup(ctx, s.db, time.Now().Add(-s.retentionPeriod), retention.BatchSize)
 	if err != nil {
 		if ctx.Err() == nil {
