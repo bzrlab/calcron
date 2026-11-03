@@ -156,7 +156,7 @@ create index if not exists workflow_instances_running_idx on workflow_instances(
 create index if not exists workflow_instances_application_id_idx on workflow_instances(application_id);
 create index if not exists deliveries_workflow_instance_id_idx on deliveries(workflow_instance_id);
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'deliveries_workflow_instance_id_fkey') then
+  if not exists (select 1 from pg_constraint where conname = 'deliveries_workflow_instance_id_fkey' and connamespace = current_schema()::regnamespace) then
     alter table deliveries add constraint deliveries_workflow_instance_id_fkey foreign key (workflow_instance_id) references workflow_instances(id);
   end if;
 end $$;
@@ -189,12 +189,12 @@ create table if not exists start_schedules (
 alter table start_schedules add column if not exists status text not null default 'active';
 create index if not exists start_schedules_due_idx on start_schedules(next_at) where status = 'active';
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'start_schedules_status_check') then
+  if not exists (select 1 from pg_constraint where conname = 'start_schedules_status_check' and connamespace = current_schema()::regnamespace) then
     alter table start_schedules add constraint start_schedules_status_check check (status in ('active','broken'));
   end if;
 end $$;
 do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'workflow_instances_status_check' and pg_get_constraintdef(oid) like '%failed%') then
+  if not exists (select 1 from pg_constraint where conname = 'workflow_instances_status_check' and connamespace = current_schema()::regnamespace and pg_get_constraintdef(oid) like '%failed%') then
     alter table workflow_instances drop constraint if exists workflow_instances_status_check;
     alter table workflow_instances add constraint workflow_instances_status_check check (status in ('running','waiting_time','waiting_signal','waiting_ack','completed','cancelled','failed'));
   end if;
